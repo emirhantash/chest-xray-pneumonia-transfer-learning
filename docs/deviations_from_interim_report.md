@@ -142,6 +142,60 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   whatever is installed. The newer version was chosen over pinning `< 1.8` because no
   training run depended on the old split yet, it keeps the project on a maintained release,
   and its split is closer to 80/20.
-- **Open point:** A future scikit-learn release could change the split again. Saving the
-  split as a file list (file names only, no images) and loading it instead of recomputing
-  it would remove this dependency; to be decided in Phase 2.
+- **Follow-up (decided, Phase 2):** The reference split is saved as
+  `splits/patient_seed42.csv` (one row per image of the original train folder: subset,
+  relative path, label, patient ID; no images) by `scripts/make_split.py`, and training
+  reads it through `split.file` instead of recomputing it. The split therefore no longer
+  depends on the installed scikit-learn version. Loading fails if the file does not list
+  exactly the images in the train folder or if a label disagrees with its class folder.
+  `scripts/check_data.py` also recomputes the split and reports whether the installed
+  scikit-learn reproduces the file (it does with 1.9.1). Every checkpoint stores a hash of
+  the train/val assignment, and resuming or evaluating a run with a different split is
+  refused.
+
+## D10. Training loop and model selection (decided, Phase 2)
+
+- **Interim report:** Table 3 gives the optimizer settings and a *maximum* of 15 epochs; no
+  learning-rate schedule, early stopping, or validation-based checkpoint selection is
+  described. With MATLAB's `trainNetwork` defaults this means a constant learning rate and
+  the network of the last iteration.
+- **Now:** A fixed number of epochs (`train.epochs`) with a constant learning rate. The model
+  after the final epoch is the result of a run; there is no early stopping and no "best
+  epoch" checkpoint. The epoch with the lowest validation error is logged in
+  `val_metrics.json` for information only.
+- **Why:** The number of epochs is one of the hyperparameters searched in Phase 3. Selecting
+  the best validation epoch would make that hyperparameter meaningless and would also bias
+  the validation error (the HPO objective) downward.
+- **Details that the interim report leaves open, now fixed:**
+  - Validation error = 1 − validation accuracy, with a sample predicted as pneumonia when
+    P(pneumonia) ≥ 0.5 (`eval.threshold`). The threshold is fixed and never tuned.
+  - The training data is reshuffled every epoch (MATLAB's default is `Shuffle="once"`).
+  - L2 weight decay is applied to all parameters including biases (MATLAB's default
+    `BiasL2Factor = 0` exempts biases). The effect is expected to be negligible.
+  - The logged loss is the class-weighted cross-entropy, averaged exactly over the epoch.
+  - The training loss and accuracy are running values in training mode (dropout active),
+    as is usual for training curves; validation metrics come from a separate evaluation
+    pass in eval mode.
+
+## D11. Mixed precision on CUDA (decided, Phase 2)
+
+- **Interim report:** Not mentioned (MATLAB trains in single precision).
+- **Now:** Automatic mixed precision (float16 autocast with gradient scaling) on CUDA GPUs
+  (`train.amp: true`); MPS and CPU always train in float32.
+- **Why:** Faster epochs on the notebook GPUs used for Phase 3, where many training runs
+  are needed. On the development GPU (RTX 3050 Ti), AMP made a training step about 1.6×
+  faster at batch size 64 and about the same at batch size 16 (synthetic-input benchmark,
+  2026-11-21). The baseline and all HPO trials use the same setting, so the comparison
+  between methods is not affected. Results on CUDA and on CPU/MPS are therefore not
+  bit-identical.
+
+## D12. In-memory image cache (decided, Phase 2)
+
+- **Interim report:** Not applicable (MATLAB `imageDatastore` reads files on demand).
+- **Now:** With `data.cache: true`, every train/val image is decoded, converted to
+  grayscale, and resized once, then kept in RAM as uint8 (about 270 MB at 227 × 227).
+- **Why:** Decoding and resizing the full-resolution JPEGs took 7.9 ms per image versus
+  0.84 ms for the remaining transform on a cached image (measured on the development
+  machine). This matters most for the many HPO runs in Phase 3. Without augmentation the
+  cached path produces exactly the same tensors as reading the files; a test checks this.
+  If augmentation is added later (D5), it must be applied after the cache.
