@@ -240,24 +240,39 @@ class ChestXrayDataset(Dataset):
         return self.transform(img), self.labels[idx]
 
 
-def build_dataloaders(splits, cfg, generator) -> dict:
-    """Create one DataLoader per split. Only the training loader is shuffled.
+def build_datasets(splits, cfg) -> dict:
+    """Create one dataset per split.
 
     With ``data.cache`` the resized grayscale images are kept in RAM (about 270 MB for
-    train + val at 227 x 227); without augmentation this gives identical batches.
+    train + val at 227 x 227); without augmentation this gives identical batches. The
+    datasets can be reused for loaders with different batch sizes (HPO trials).
     """
     image_size = cfg["data"]["image_size"]
     transform = build_transform(image_size)
     preload_size = image_size if cfg["data"]["cache"] else None
-    loaders = {}
-    for name, (paths, labels) in splits.items():
-        loaders[name] = DataLoader(
-            ChestXrayDataset(paths, labels, transform, preload_size),
-            batch_size=cfg["train"]["batch_size"],
-            shuffle=(name == "train"),
-            num_workers=cfg["data"]["num_workers"],
-            pin_memory=torch.cuda.is_available(),
-            worker_init_fn=seed_worker,
-            generator=generator,
-        )
-    return loaders
+    return {
+        name: ChestXrayDataset(paths, labels, transform, preload_size)
+        for name, (paths, labels) in splits.items()
+    }
+
+
+def make_loader(dataset, shuffle: bool, cfg, generator) -> DataLoader:
+    """DataLoader with the batch size and worker settings of ``cfg``."""
+    return DataLoader(
+        dataset,
+        batch_size=cfg["train"]["batch_size"],
+        shuffle=shuffle,
+        num_workers=cfg["data"]["num_workers"],
+        pin_memory=torch.cuda.is_available(),
+        worker_init_fn=seed_worker,
+        generator=generator,
+    )
+
+
+def build_dataloaders(splits, cfg, generator) -> dict:
+    """Create one DataLoader per split. Only the training loader is shuffled."""
+    datasets = build_datasets(splits, cfg)
+    return {
+        name: make_loader(dataset, name == "train", cfg, generator)
+        for name, dataset in datasets.items()
+    }

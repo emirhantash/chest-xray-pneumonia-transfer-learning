@@ -32,7 +32,7 @@ from src.engine import build_criterion, build_optimizer, evaluate, train_one_epo
 from src.metrics import roc_points
 from src.model import build_alexnet
 from src.plots import plot_confusion_matrix, plot_history, plot_roc
-from src.utils import get_device, set_seed
+from src.utils import get_device, git_revision, set_seed
 
 CHECKPOINT_NAME = "last.pt"
 # Validation metrics logged per epoch (prefixed with "val_" in history.csv).
@@ -110,7 +110,72 @@ def _run_info(cfg, device, amp: bool, fingerprint: str) -> dict:
         "amp": amp,
         "split_source": cfg["split"]["file"] or "computed",
         "split_fingerprint": fingerprint,
+        "git": git_revision(),
     }
+
+
+def format_epoch(row: dict, n_epochs: int) -> str:
+    """One log line for a history row."""
+    return (
+        f"epoch {row['epoch']:2d}/{n_epochs}  train loss {row['train_loss']:.4f} "
+        f"acc {row['train_accuracy']:.4f} | val loss {row['val_loss']:.4f} "
+        f"acc {row['val_accuracy']:.4f} recall {row['val_recall']:.4f} "
+        f"spec {row['val_specificity']:.4f} auc {row['val_auc']:.4f} | "
+        f"{row['epoch_time_s']:.1f} s"
+    )
+
+
+def fit(
+    model,
+    loaders: dict,
+    criterion,
+    optimizer,
+    scaler,
+    generator: torch.Generator,
+    cfg: dict,
+    device: torch.device,
+    amp: bool,
+    history: list[dict] | None = None,
+    start_epoch: int = 1,
+    on_epoch_end=None,
+):
+    """Train epochs ``start_epoch..train.epochs``, evaluating on val after each epoch.
+
+    ``on_epoch_end(epoch, history)`` runs after every epoch; returning True stops the
+    loop (used to simulate an interruption, and by HPO trials to stop once the weights
+    have become NaN/inf).
+
+    Returns ``(history, latest)``; ``latest = (val_metrics, y_true, y_prob)`` of the
+    last epoch run in this call, or None if no epoch was left.
+    """
+    history = [] if history is None else history
+    seed, n_epochs = cfg["seed"], cfg["train"]["epochs"]
+    threshold = cfg["eval"]["threshold"]
+    latest = None
+    for epoch in range(start_epoch, n_epochs + 1):
+        # Re-seeding the shuffling generator per epoch makes the batch order of an epoch
+        # independent of how many epochs ran in the current session (exact resume).
+        generator.manual_seed(seed + epoch)
+        start = time.perf_counter()
+        train_stats = train_one_epoch(
+            model, loaders["train"], criterion, optimizer, scaler, device, amp
+        )
+        latest = evaluate(model, loaders["val"], criterion, device, amp, threshold)
+        val = latest[0]
+        history.append(
+            {
+                "epoch": epoch,
+                "lr": optimizer.param_groups[0]["lr"],
+                "train_loss": train_stats["loss"],
+                "train_accuracy": train_stats["accuracy"],
+                **{f"val_{k}": val[k] for k in VAL_LOG_KEYS},
+                "epoch_time_s": round(time.perf_counter() - start, 2),
+            }
+        )
+        print(format_epoch(history[-1], n_epochs), flush=True)
+        if on_epoch_end is not None and on_epoch_end(epoch, history):
+            break
+    return history, latest
 
 
 def run_training(
@@ -190,27 +255,8 @@ def run_training(
         f"Training on {device} (amp={amp}): {len(splits['train'][0])} train / "
         f"{len(splits['val'][0])} val images, {epochs_left}"
     )
-    latest = None
-    for epoch in range(start_epoch, n_epochs + 1):
-        # Re-seeding the shuffling generator per epoch makes the batch order of an epoch
-        # independent of how many epochs ran in the current session (exact resume).
-        generator.manual_seed(seed + epoch)
-        start = time.perf_counter()
-        train_stats = train_one_epoch(
-            model, loaders["train"], criterion, optimizer, scaler, device, amp
-        )
-        latest = evaluate(model, loaders["val"], criterion, device, amp, threshold)
-        val = latest[0]
-        history.append(
-            {
-                "epoch": epoch,
-                "lr": optimizer.param_groups[0]["lr"],
-                "train_loss": train_stats["loss"],
-                "train_accuracy": train_stats["accuracy"],
-                **{f"val_{k}": val[k] for k in VAL_LOG_KEYS},
-                "epoch_time_s": round(time.perf_counter() - start, 2),
-            }
-        )
+
+    def on_epoch_end(epoch: int, history: list[dict]) -> bool:
         save_checkpoint(
             {
                 "epoch": epoch,
@@ -225,15 +271,24 @@ def run_training(
             ckpt_path,
         )
         _write_history(run_dir / "history.csv", history)
-        print(
-            f"epoch {epoch:2d}/{n_epochs}  train loss {train_stats['loss']:.4f} "
-            f"acc {train_stats['accuracy']:.4f} | val loss {val['loss']:.4f} "
-            f"acc {val['accuracy']:.4f} recall {val['recall']:.4f} "
-            f"spec {val['specificity']:.4f} auc {val['auc']:.4f} | "
-            f"{history[-1]['epoch_time_s']:.1f} s"
-        )
-        if stop_after is not None and epoch >= stop_after and epoch < n_epochs:
-            return {"epoch": epoch, "completed": False, "val_metrics": val}
+        return stop_after is not None and epoch >= stop_after
+
+    history, latest = fit(
+        model,
+        loaders,
+        criterion,
+        optimizer,
+        scaler,
+        generator,
+        cfg,
+        device,
+        amp,
+        history=history,
+        start_epoch=start_epoch,
+        on_epoch_end=on_epoch_end,
+    )
+    if history[-1]["epoch"] < n_epochs:  # stopped early by ``stop_after``
+        return {"epoch": history[-1]["epoch"], "completed": False, "val_metrics": latest[0]}
 
     if latest is None:  # the run was already complete: recompute the final predictions
         latest = evaluate(model, loaders["val"], criterion, device, amp, threshold)
