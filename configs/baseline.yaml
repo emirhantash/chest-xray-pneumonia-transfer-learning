@@ -1,0 +1,28 @@
+# Baseline configuration (interim report, Table 3).
+
+seed: 42
+
+data:
+  # Folder that contains train/ and test/ (the original val/ folder is not used).
+  # Can be overridden from the command line with --data-root.
+  root: data/chest_xray
+  image_size: 227
+  num_workers: 2
+
+split:
+  mode: patient        # patient | image
+  val_fraction: 0.2
+
+model:
+  pretrained: true     # ImageNet weights (torchvision AlexNet_Weights.IMAGENET1K_V1)
+  num_classes: 2
+
+train:
+  lr: 0.001
+  momentum: 0.9
+  weight_decay: 0.0001
+  batch_size: 16
+  epochs: 15
+  use_class_weights: true
+
+output_dir: outputs

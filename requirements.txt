@@ -1,0 +1,9 @@
+# Install PyTorch first following https://pytorch.org/get-started/locally/
+# (pick the CUDA / CPU build for your machine), then: pip install -r requirements.txt
+torch>=2.0
+torchvision>=0.15
+numpy>=1.23
+scikit-learn>=1.8  # >=1.8 changed StratifiedGroupKFold; the documented split depends on it
+pyyaml>=6.0
+pillow>=9.0
+matplotlib>=3.6
