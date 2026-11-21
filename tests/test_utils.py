@@ -1,13 +1,15 @@
 """Tests for src/utils.py and the baseline configuration."""
 
 import random
+from collections import Counter
 
 import numpy as np
 import pytest
 import torch
 
+from src.data import read_split_file
 from src.utils import get_device, load_config, set_seed
-from tests.conftest import BASELINE_CONFIG
+from tests.conftest import BASELINE_CONFIG, REPO_ROOT
 
 
 def _draw():
@@ -43,7 +45,11 @@ def test_baseline_config_matches_protocol():
     cfg = load_config(BASELINE_CONFIG)
     assert cfg["seed"] == 42
     assert cfg["data"]["image_size"] == 227
-    assert cfg["split"] == {"mode": "patient", "val_fraction": 0.2}
+    assert cfg["split"] == {
+        "mode": "patient",
+        "val_fraction": 0.2,
+        "file": "splits/patient_seed42.csv",
+    }
     assert cfg["model"] == {"pretrained": True, "num_classes": 2}
     train = cfg["train"]
     assert train["lr"] == pytest.approx(1e-3)
@@ -51,3 +57,11 @@ def test_baseline_config_matches_protocol():
     assert train["weight_decay"] == pytest.approx(1e-4)
     assert (train["batch_size"], train["epochs"]) == (16, 15)
     assert train["use_class_weights"] is True
+    assert cfg["eval"] == {"threshold": 0.5}
+
+
+def test_committed_split_file_matches_the_documented_split():
+    # The reference split (D3/D9): 4,172 train (1,072 / 3,100) and 1,044 val (269 / 775).
+    entries = read_split_file(REPO_ROOT / load_config(BASELINE_CONFIG)["split"]["file"])
+    counts = Counter(entries.values())
+    assert counts == {("train", 0): 1072, ("train", 1): 3100, ("val", 0): 269, ("val", 1): 775}

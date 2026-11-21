@@ -1,6 +1,10 @@
 """Data pipeline: file listing, patient IDs, stratified split, transforms, loaders."""
 
+import csv
+import hashlib
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +22,7 @@ NUM_CLASSES = len(CLASSES)
 IMAGE_EXTENSIONS = {".jpeg", ".jpg", ".png"}
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
+SPLIT_FILE_FIELDS = ["subset", "path", "label", "patient_id"]
 
 # Patient ID patterns inferred from the dataset's file names:
 #   person1000_bacteria_2931.jpeg -> person1000
@@ -83,22 +88,95 @@ def split_train_val(paths, labels, val_fraction, mode, seed):
     return np.sort(train_idx), np.sort(val_idx)
 
 
-def build_splits(cfg) -> dict:
+def write_split_file(path, splits, root) -> None:
+    """Save the train/val assignment as a CSV of paths relative to ``root`` (no images)."""
+    path, root = Path(path), Path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f, lineterminator="\n")  # same bytes on every OS
+        writer.writerow(SPLIT_FILE_FIELDS)
+        for subset in ("train", "val"):
+            for p, y in zip(*splits[subset], strict=True):
+                writer.writerow([subset, p.relative_to(root).as_posix(), y, patient_id(p)])
+
+
+def read_split_file(path) -> dict:
+    """Read a split file into ``{relative path: (subset, label)}``."""
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != SPLIT_FILE_FIELDS:
+            raise ValueError(
+                f"{path}: expected columns {SPLIT_FILE_FIELDS}, got {reader.fieldnames}"
+            )
+        entries = {row["path"]: (row["subset"], int(row["label"])) for row in reader}
+    unknown = {subset for subset, _ in entries.values()} - {"train", "val"}
+    if unknown:
+        raise ValueError(f"{path}: unknown subsets {sorted(unknown)}")
+    return entries
+
+
+def _splits_from_file(path, root, paths, labels):
+    """Assign the listed train-folder images to train/val as recorded in a split file.
+
+    The file must cover exactly the images in the train folder, with matching labels, so
+    a different dataset copy or a stale file fails loudly instead of changing the split.
+    """
+    entries = read_split_file(path)
+    listed = {p.relative_to(root).as_posix(): (p, y) for p, y in zip(paths, labels, strict=True)}
+    missing, extra = entries.keys() - listed.keys(), listed.keys() - entries.keys()
+    if missing or extra:
+        raise ValueError(
+            f"Split file {path} does not match {root / 'train'}: {len(missing)} listed "
+            f"files not found, {len(extra)} images not in the file (e.g. "
+            f"{sorted(missing or extra)[0]})."
+        )
+    splits = {"train": ([], []), "val": ([], [])}
+    for rel, (p, y) in listed.items():  # listing order, as in the computed split
+        subset, file_label = entries[rel]
+        if file_label != y:
+            raise ValueError(f"Split file {path}: label {file_label} != folder label {y} ({rel})")
+        splits[subset][0].append(p)
+        splits[subset][1].append(y)
+    return splits
+
+
+def build_splits(cfg, include_test: bool = True) -> dict:
     """Return {"train": (paths, labels), "val": (...), "test": (...)}.
 
-    train/val come from the original train folder; test is the untouched original test
-    folder. The original val folder (16 images) is not used.
+    train/val come from the original train folder: read from ``split.file`` if set,
+    otherwise computed with :func:`split_train_val`. test is the untouched original test
+    folder and is only listed when ``include_test`` is true (training never needs it).
+    The original val folder (16 images) is not used.
     """
     root = Path(cfg["data"]["root"])
     paths, labels = list_images(root / "train")
-    train_idx, val_idx = split_train_val(
-        paths, labels, cfg["split"]["val_fraction"], cfg["split"]["mode"], cfg["seed"]
-    )
-    return {
-        "train": ([paths[i] for i in train_idx], [labels[i] for i in train_idx]),
-        "val": ([paths[i] for i in val_idx], [labels[i] for i in val_idx]),
-        "test": list_images(root / "test"),
-    }
+    if cfg["split"]["file"]:
+        splits = _splits_from_file(cfg["split"]["file"], root, paths, labels)
+    else:
+        train_idx, val_idx = split_train_val(
+            paths, labels, cfg["split"]["val_fraction"], cfg["split"]["mode"], cfg["seed"]
+        )
+        splits = {
+            "train": ([paths[i] for i in train_idx], [labels[i] for i in train_idx]),
+            "val": ([paths[i] for i in val_idx], [labels[i] for i in val_idx]),
+        }
+    if include_test:
+        splits["test"] = list_images(root / "test")
+    return splits
+
+
+def split_fingerprint(splits, root) -> str:
+    """Short hash of the train/val assignment (relative paths and labels).
+
+    Stored in checkpoints so that a resumed run or a later evaluation can verify that it
+    uses exactly the same split, independent of where the data lives.
+    """
+    digest = hashlib.sha256()
+    for subset in ("train", "val"):
+        for p, y in zip(*splits[subset], strict=True):
+            line = f"{subset},{Path(p).relative_to(root).as_posix()},{y}\n"
+            digest.update(line.encode())
+    return digest.hexdigest()[:16]
 
 
 def compute_class_weights(labels, num_classes: int = NUM_CLASSES) -> torch.Tensor:
@@ -119,28 +197,62 @@ def build_transform(image_size: int):
     )
 
 
+def load_gray(path) -> Image.Image:
+    """Open an image as single-channel grayscale (a few files are stored as RGB)."""
+    with Image.open(path) as img:
+        return img.convert("L")
+
+
+def preload_images(paths, image_size: int) -> torch.Tensor:
+    """Decode and resize all images once; returns a uint8 tensor (N, H, W) in shared memory.
+
+    Uses the same Resize as :func:`build_transform`, so the cached and the on-the-fly
+    paths give identical tensors (the second Resize is a no-op at the target size).
+    Shared memory lets DataLoader workers read the cache without copying it.
+    """
+    resize = transforms.Resize((image_size, image_size))
+
+    def load(path):
+        return np.asarray(resize(load_gray(path)), dtype=np.uint8)
+
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 1)) as pool:
+        arrays = list(pool.map(load, paths))
+    return torch.from_numpy(np.stack(arrays)).share_memory_()
+
+
 class ChestXrayDataset(Dataset):
-    def __init__(self, paths, labels, transform):
+    """Images and labels; optionally served from an in-memory cache (``preload_size``)."""
+
+    def __init__(self, paths, labels, transform, preload_size: int | None = None):
         self.paths = paths
         self.labels = labels
         self.transform = transform
+        self.cache = preload_images(paths, preload_size) if preload_size else None
 
     def __len__(self):
         return len(self.paths)
 
     def __getitem__(self, idx):
-        with Image.open(self.paths[idx]) as img:
-            img = img.convert("L")  # a few files are stored as RGB
+        if self.cache is not None:
+            img = Image.fromarray(self.cache[idx].numpy())
+        else:
+            img = load_gray(self.paths[idx])
         return self.transform(img), self.labels[idx]
 
 
 def build_dataloaders(splits, cfg, generator) -> dict:
-    """Create train/val/test DataLoaders. Only the training loader is shuffled."""
-    transform = build_transform(cfg["data"]["image_size"])
+    """Create one DataLoader per split. Only the training loader is shuffled.
+
+    With ``data.cache`` the resized grayscale images are kept in RAM (about 270 MB for
+    train + val at 227 x 227); without augmentation this gives identical batches.
+    """
+    image_size = cfg["data"]["image_size"]
+    transform = build_transform(image_size)
+    preload_size = image_size if cfg["data"]["cache"] else None
     loaders = {}
     for name, (paths, labels) in splits.items():
         loaders[name] = DataLoader(
-            ChestXrayDataset(paths, labels, transform),
+            ChestXrayDataset(paths, labels, transform, preload_size),
             batch_size=cfg["train"]["batch_size"],
             shuffle=(name == "train"),
             num_workers=cfg["data"]["num_workers"],

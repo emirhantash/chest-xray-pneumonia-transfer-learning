@@ -18,7 +18,10 @@ from src.data import (
     compute_class_weights,
     list_images,
     patient_id,
+    read_split_file,
+    split_fingerprint,
     split_train_val,
+    write_split_file,
 )
 from src.utils import set_seed
 from tests.conftest import TEST_NORMAL, TEST_PNEUMONIA, TRAIN_NORMAL, TRAIN_PNEUMONIA
@@ -139,6 +142,74 @@ def test_unknown_split_mode_raises(data_root):
         split_train_val(paths, labels, 0.2, "random", seed=42)
 
 
+def test_build_splits_can_skip_the_test_set(cfg):
+    assert set(build_splits(cfg, include_test=False)) == {"train", "val"}
+
+
+# --- split file --------------------------------------------------------------------------
+
+
+def test_split_file_roundtrip(cfg, data_root, tmp_path):
+    computed = build_splits(cfg, include_test=False)
+    path = tmp_path / "split.csv"
+    write_split_file(path, computed, data_root)
+
+    cfg["split"]["file"] = str(path)
+    from_file = build_splits(cfg, include_test=False)
+    assert from_file == computed  # same images, labels, and order
+    assert split_fingerprint(from_file, data_root) == split_fingerprint(computed, data_root)
+
+    entries = read_split_file(path)
+    assert len(entries) == N_TRAIN
+    assert all(rel.startswith("train/") for rel in entries)  # relative, POSIX-style paths
+
+
+def test_split_file_does_not_depend_on_split_settings(cfg, data_root, tmp_path):
+    path = tmp_path / "split.csv"
+    write_split_file(path, build_splits(cfg, include_test=False), data_root)
+    expected = build_splits(cfg, include_test=False)
+
+    # Once a split file is given, seed / mode no longer change the split.
+    cfg["split"].update(file=str(path), mode="image")
+    cfg["seed"] = 7
+    assert build_splits(cfg, include_test=False) == expected
+
+
+def _rewrite_split_file(path, transform):
+    lines = path.read_text(encoding="utf-8").splitlines()
+    path.write_text("\n".join(transform(lines)) + "\n", encoding="utf-8")
+
+
+def test_split_file_must_cover_the_train_folder(cfg, data_root, tmp_path):
+    path = tmp_path / "split.csv"
+    write_split_file(path, build_splits(cfg, include_test=False), data_root)
+    _rewrite_split_file(path, lambda lines: lines[:-1])  # drop one image
+    cfg["split"]["file"] = str(path)
+    with pytest.raises(ValueError, match="1 images not in the file"):
+        build_splits(cfg)
+
+
+def test_split_file_label_mismatch_raises(cfg, data_root, tmp_path):
+    path = tmp_path / "split.csv"
+    write_split_file(path, build_splits(cfg, include_test=False), data_root)
+
+    def flip_first_label(lines):
+        subset, rel, label, pid = lines[1].split(",")
+        return [lines[0], f"{subset},{rel},{1 - int(label)},{pid}", *lines[2:]]
+
+    _rewrite_split_file(path, flip_first_label)
+    cfg["split"]["file"] = str(path)
+    with pytest.raises(ValueError, match="folder label"):
+        build_splits(cfg)
+
+
+def test_split_fingerprint_changes_with_the_split(cfg, data_root):
+    splits = build_splits(cfg, include_test=False)
+    other = build_splits({**cfg, "seed": cfg["seed"] + 1}, include_test=False)
+    assert splits["val"] != other["val"]
+    assert split_fingerprint(splits, data_root) != split_fingerprint(other, data_root)
+
+
 def test_build_splits_keeps_test_set_untouched(cfg, data_root):
     splits = build_splits(cfg)
     assert set(splits) == {"train", "val", "test"}
@@ -230,6 +301,20 @@ def test_rgb_and_grayscale_copies_give_identical_tensors(tmp_path):
     torch.testing.assert_close(dataset[0][0], dataset[1][0], atol=0, rtol=0)
 
 
+def test_cached_dataset_gives_identical_tensors(data_root):
+    paths, labels = list_images(data_root / "train")
+    transform = build_transform(48)
+    plain = ChestXrayDataset(paths, labels, transform)
+    cached = ChestXrayDataset(paths, labels, transform, preload_size=48)
+    assert cached.cache.shape == (len(paths), 48, 48)
+    assert cached.cache.dtype == torch.uint8
+    for i in range(len(paths)):  # includes the RGB files
+        image_plain, label_plain = plain[i]
+        image_cached, label_cached = cached[i]
+        assert label_plain == label_cached
+        torch.testing.assert_close(image_plain, image_cached, atol=0, rtol=0)
+
+
 # --- data loaders ------------------------------------------------------------------------
 
 
@@ -252,3 +337,11 @@ def test_dataloader_shuffling_is_reproducible(cfg):
     _, (images_b, labels_b) = _first_train_batch(cfg)
     torch.testing.assert_close(images_a, images_b)
     torch.testing.assert_close(labels_a, labels_b)
+
+
+def test_cached_and_uncached_loaders_give_identical_batches(cfg):
+    _, (images_plain, labels_plain) = _first_train_batch(cfg)
+    cfg["data"]["cache"] = True
+    _, (images_cached, labels_cached) = _first_train_batch(cfg)
+    torch.testing.assert_close(images_plain, images_cached, atol=0, rtol=0)
+    torch.testing.assert_close(labels_plain, labels_cached)

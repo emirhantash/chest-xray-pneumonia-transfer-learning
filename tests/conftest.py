@@ -72,5 +72,18 @@ def cfg(data_root) -> dict:
     config = load_config(BASELINE_CONFIG)
     config["data"]["root"] = str(data_root)
     config["data"]["num_workers"] = 0
+    config["data"]["cache"] = False
+    config["split"]["file"] = None  # the committed split file lists the real images
     config["train"]["batch_size"] = 4
     return config
+
+
+@pytest.fixture()
+def train_cfg(cfg, tmp_path) -> dict:
+    """A config for quick CPU training runs on the synthetic data."""
+    cfg["data"]["image_size"] = 64
+    cfg["model"]["pretrained"] = False
+    cfg["train"]["batch_size"] = 8
+    cfg["train"]["epochs"] = 2
+    cfg["output_dir"] = str(tmp_path / "outputs")
+    return cfg

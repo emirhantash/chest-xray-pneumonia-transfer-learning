@@ -1,6 +1,7 @@
 # Baseline configuration (interim report, Table 3).
 
 seed: 42
+run_name: baseline     # outputs go to <output_dir>/<run_name>/ (override with --run-name)
 
 data:
   # Folder that contains train/ and test/ (the original val/ folder is not used).
@@ -8,10 +9,17 @@ data:
   root: data/chest_xray
   image_size: 227
   num_workers: 2
+  # Keep the resized grayscale images in RAM (~270 MB for train + val at 227 x 227).
+  # Same batches as without the cache (there is no augmentation), but much faster epochs.
+  cache: true
 
 split:
   mode: patient        # patient | image
   val_fraction: 0.2
+  # Saved train/val assignment (see scripts/make_split.py). When set, the split is read
+  # from this file instead of being recomputed, so it does not depend on the scikit-learn
+  # version. Set to null to compute it from mode / val_fraction / seed.
+  file: splits/patient_seed42.csv
 
 model:
   pretrained: true     # ImageNet weights (torchvision AlexNet_Weights.IMAGENET1K_V1)
@@ -22,7 +30,11 @@ train:
   momentum: 0.9
   weight_decay: 0.0001
   batch_size: 16
-  epochs: 15
+  epochs: 15           # fixed number of epochs; the final-epoch model is the result
   use_class_weights: true
+  amp: true            # mixed precision on CUDA only; ignored on MPS / CPU
+
+eval:
+  threshold: 0.5       # P(pneumonia) >= threshold -> pneumonia; fixed, never tuned
 
 output_dir: outputs

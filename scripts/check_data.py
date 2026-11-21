@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import sklearn
 import torch
 
 from src.data import (
@@ -76,6 +77,7 @@ def main():
     cfg = load_config(args.config)
     if args.data_root:
         cfg["data"]["root"] = args.data_root
+    cfg["data"]["cache"] = False  # only one batch is loaded here
     generator = set_seed(cfg["seed"])
     out_dir = Path(cfg["output_dir"]) / "check_data"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +102,18 @@ def main():
     # 2. Split statistics
     mode, seed = cfg["split"]["mode"], cfg["seed"]
     print(f"\n[2] Split (mode={mode}, val_fraction={cfg['split']['val_fraction']}, seed={seed})")
+    if cfg["split"]["file"]:
+        # The split file is authoritative; recomputing only shows whether this
+        # scikit-learn version would reproduce it (see D9).
+        computed = build_splits({**cfg, "split": {**cfg["split"], "file": None}})
+        same = computed["val"][0] == splits["val"][0]
+        print(f"  source: split file {cfg['split']['file']}")
+        print(
+            f"  recomputed with scikit-learn {sklearn.__version__}: "
+            + ("identical" if same else "DIFFERENT (the split file is used)")
+        )
+    else:
+        print(f"  source: computed with scikit-learn {sklearn.__version__}")
     n_total = len(splits["train"][1]) + len(splits["val"][1])
     print(
         f"  {'subset':6s} {'NORMAL':>7s} {'PNEUM.':>7s} {'total':>6s} {'share':>6s} "
