@@ -1,9 +1,10 @@
-"""Figures: learning curves, confusion matrix, ROC curve.
+"""Figures: learning curves, confusion matrix, ROC curve, and HPO comparison plots.
 
 Uses matplotlib's object-oriented ``Figure`` API (no pyplot), so no GUI backend is
 needed and the functions are safe to call from scripts, notebooks, and tests.
 """
 
+import numpy as np
 from matplotlib.figure import Figure
 
 from src.data import CLASSES
@@ -72,4 +73,102 @@ def plot_roc(fpr, tpr, auc: float, path, title: str) -> None:
     )
     ax.grid(alpha=0.3)
     ax.legend(loc="lower right")
+    fig.savefig(path, dpi=120)
+
+
+# --- hyperparameter optimization ---------------------------------------------------------
+
+METHOD_COLORS = {"gp": "C0", "random": "C1"}
+METHOD_LABELS = {"gp": "Bayesian optimization (GP)", "random": "Random Search"}
+# Plotted errors are clipped here so that log axes also work for a perfect trial.
+MIN_PLOTTED_ERROR = 1e-4
+
+
+def _by_method(results: list[dict]) -> dict:
+    grouped = {}
+    for r in sorted(results, key=lambda r: (r["method"], r["seed"])):
+        grouped.setdefault(r["method"], []).append(r)
+    return grouped
+
+
+def _baseline_line(ax, baseline_error):
+    if baseline_error is not None:
+        ax.axhline(baseline_error, color="gray", ls="--", label=f"baseline ({baseline_error:.4f})")
+
+
+def plot_best_so_far(results: list[dict], baseline_error, path) -> None:
+    """Best validation error so far vs completed trials: each seed (thin) and the mean
+    over seeds with its min-max band (thick), per method."""
+    fig = Figure(figsize=(7, 4.5), layout="constrained")
+    ax = fig.subplots()
+    for method, runs in _by_method(results).items():
+        color = METHOD_COLORS.get(method)
+        curves = [np.minimum.accumulate(np.asarray(r["values"], dtype=float)) for r in runs]
+        for curve in curves:
+            ax.plot(np.arange(1, len(curve) + 1), curve, color=color, alpha=0.3, lw=1)
+        n = min(len(c) for c in curves)
+        stacked = np.stack([c[:n] for c in curves])
+        x = np.arange(1, n + 1)
+        label = f"{METHOD_LABELS.get(method, method)} (mean of {len(curves)} seeds)"
+        ax.plot(x, stacked.mean(axis=0), color=color, lw=2.5, label=label)
+        ax.fill_between(x, stacked.min(axis=0), stacked.max(axis=0), color=color, alpha=0.15)
+    _baseline_line(ax, baseline_error)
+    finite_best = [min(r["values"]) for r in results]
+    if baseline_error is not None and finite_best:
+        ax.set_ylim(0.8 * min(finite_best + [baseline_error]), 3 * baseline_error)
+    ax.set(xlabel="completed trials", ylabel="best validation error so far")
+    ax.set_title("HPO convergence")
+    ax.grid(alpha=0.3)
+    ax.legend()
+    fig.savefig(path, dpi=120)
+
+
+def plot_trial_errors(results: list[dict], baseline_error, path) -> None:
+    """Validation error of every completed trial (all seeds), log scale."""
+    fig = Figure(figsize=(7, 4.5), layout="constrained")
+    ax = fig.subplots()
+    for method, runs in _by_method(results).items():
+        xs = [i + 1 for r in runs for i in range(len(r["values"]))]
+        ys = [max(v, MIN_PLOTTED_ERROR) for r in runs for v in r["values"]]
+        ax.scatter(
+            xs,
+            ys,
+            s=18,
+            alpha=0.6,
+            color=METHOD_COLORS.get(method),
+            label=METHOD_LABELS.get(method, method),
+        )
+    _baseline_line(ax, baseline_error)
+    ax.set_yscale("log")
+    ax.set(xlabel="trial (completed, per study)", ylabel="validation error")
+    ax.set_title("All trials")
+    ax.grid(alpha=0.3, which="both")
+    ax.legend()
+    fig.savefig(path, dpi=120)
+
+
+def plot_params_vs_error(results: list[dict], space: dict, path) -> None:
+    """Each searched hyperparameter vs validation error, colored by method."""
+    names = list(space)
+    fig = Figure(figsize=(4 * len(names), 3.8), layout="constrained")
+    axes = np.atleast_1d(fig.subplots(1, len(names), sharey=True))
+    for ax, name in zip(axes, names, strict=True):
+        for method, runs in _by_method(results).items():
+            xs = [p[name] for r in runs for p in r["params"]]
+            ys = [max(v, MIN_PLOTTED_ERROR) for r in runs for v in r["values"]]
+            ax.scatter(
+                xs,
+                ys,
+                s=16,
+                alpha=0.6,
+                color=METHOD_COLORS.get(method),
+                label=METHOD_LABELS.get(method, method),
+            )
+        if space[name].get("log"):
+            ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel(name)
+        ax.grid(alpha=0.3, which="both")
+    axes[0].set_ylabel("validation error")
+    axes[0].legend(fontsize=8)
     fig.savefig(path, dpi=120)
