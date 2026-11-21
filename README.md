@@ -9,7 +9,8 @@ the Kaggle "Chest X-Ray Images (Pneumonia)" dataset with an ImageNet-pretrained 
 (PyTorch), followed by hyperparameter optimization (Bayesian optimization vs. Random Search).
 
 **Status:** Data pipeline, training/evaluation pipeline (resumable, with a Colab/Kaggle
-runner notebook), test suite, and CI are done. Hyperparameter optimization comes next.
+runner notebook), hyperparameter-optimization pipeline, test suite, and CI are done. The HPO
+studies are running; results and the final test evaluation come next.
 
 ## Setup
 
@@ -134,7 +135,8 @@ on CPU).
 
 **Speed and memory.** Mixed precision (`train.amp`) is used on CUDA only; MPS and CPU train
 in float32. With `data.cache: true` the resized grayscale images are kept in RAM
-(≈270 MB). The baseline (batch size 16) needs well under 2 GB of GPU memory.
+(≈270 MB); without worker processes (`data.num_workers: 0`) this is ~3× faster than with
+workers on Windows. Training needs under 1 GB of GPU memory at batch size 8–64 (AMP).
 
 **Colab / Kaggle.** [`notebooks/colab_kaggle_runner.ipynb`](notebooks/colab_kaggle_runner.ipynb)
 clones the repository, installs the dependencies, locates the dataset, writes outputs to
@@ -154,6 +156,35 @@ and ROC AUC. A sample is predicted as pneumonia when P(pneumonia) ≥ 0.5
 (`eval.threshold`, fixed). The **test set is evaluated only with an explicit
 `--split test --final`**, once, for the final models; it is never used to select models,
 epochs, thresholds, or hyperparameters.
+
+## Hyperparameter optimization
+
+Bayesian optimization with a Gaussian process (Optuna `GPSampler`) is compared with Random
+Search (`RandomSampler`) under the same conditions (`configs/hpo.yaml`, details in
+[D13](docs/deviations_from_interim_report.md#d13-hpo-protocol-decided-phase-3)):
+
+| | |
+|---|---|
+| Search space | lr [1e-4, 1e-2] log, batch size {8, 16, 32, 64}, epochs [5, 30], weight decay [1e-5, 1e-3] log, momentum [0.8, 0.99] |
+| Objective | validation error (1 − accuracy) of the final-epoch model |
+| Budget | 30 completed trials per study; sampler seeds 0, 1, 2 for each method |
+| Fixed | training seed, split, preprocessing, class weights, AMP; no pruning |
+
+```bash
+python scripts/hpo.py --method gp --seed 0 --data-root <path>       # Bayesian optimization
+python scripts/hpo.py --method random --seed 0 --data-root <path>   # Random Search
+python scripts/compare_hpo.py                                       # summary table and plots
+python scripts/train.py --config outputs/hpo/gp_seed0/best_config.yaml --data-root <path>
+```
+
+Each study lives in `outputs/hpo/<method>_seed<seed>/` (`study.db`, `trials.csv`,
+`best_config.yaml`). Rerunning the same command resumes an interrupted study at the last
+completed trial; the interrupted trial is repeated with the same parameters. With
+`--backup-dir`, the SQLite file stays on local disk and is copied (e.g. to Google Drive)
+after every trial. `compare_hpo.py` writes `summary.csv`, the best-so-far curves of both
+methods with the baseline as reference, all trial errors, and each hyperparameter vs the
+error. On the development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s
+depending on the batch size, i.e. roughly 2 hours per study.
 
 ## Development
 
@@ -180,6 +211,7 @@ pull request to `main`. Tool settings (ruff, pytest) live in `pyproject.toml`.
 
 ```
 configs/baseline.yaml      # hyperparameters and paths (baseline = interim report, Table 3)
+configs/hpo.yaml           # search space and budget (interim report, Table 4)
 splits/patient_seed42.csv  # the train/val assignment (file names only)
 src/utils.py               # set_seed, seed_worker, load_config, get_device
 src/data.py                # file listing, patient IDs, split (+ split file), transforms,
@@ -189,11 +221,14 @@ src/metrics.py             # confusion matrix, accuracy, recall, specificity, F1
 src/engine.py              # optimizer, loss, train / evaluate loops, AMP
 src/checkpoint.py          # atomic checkpoints, RNG state capture/restore
 src/plots.py               # learning curves, confusion matrix, ROC figures
-src/runner.py              # resumable training run and evaluation of a finished run
+src/runner.py              # shared epoch loop, resumable training run, evaluation of a run
+src/hpo.py                 # Optuna studies (GP vs Random), resume logic, analysis
 scripts/check_data.py      # data/split/model sanity checks
 scripts/make_split.py      # computes and saves the split file
 scripts/train.py           # training entry point
 scripts/evaluate.py        # evaluation entry point (test set only with --final)
+scripts/hpo.py             # runs or resumes one HPO study
+scripts/compare_hpo.py     # compares the studies (table and plots)
 notebooks/colab_kaggle_runner.ipynb   # runs the pipeline on Colab / Kaggle GPUs
 tests/                     # pytest suite on synthetic data (fixtures in conftest.py)
 docs/deviations_from_interim_report.md   # what changed since the interim report and why
@@ -210,7 +245,8 @@ controlled by `seed` in the config through `src.utils.set_seed`. The shuffling g
 is re-seeded with `seed + epoch` at the start of every epoch, so a resumed run sees the
 same batches as an uninterrupted one. cuDNN is set to deterministic mode, but some CUDA
 kernels are not bit-exact between runs, and runs on Apple MPS may not be either. Library
-versions and the device of every run are saved in `run_info.json`.
+versions, the device, and the git commit of every run are saved in `run_info.json` (and
+with every HPO session).
 
 ## Limitations
 

@@ -93,12 +93,19 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
 - **Note for later:** Horizontal flips on chest X-rays swap the anatomical sides (heart
   position, side markers); small rotations/affine transforms are the safer choice.
 
-## D6. Bayesian optimization method (open, Phase 3)
+## D6. Bayesian optimization method (decided, Phase 3)
 
 - **Interim report:** MATLAB `bayesopt` (Gaussian-process-based Bayesian optimization).
-- **Plan:** Optuna. Its default sampler (TPE) is a Bayesian, model-based method, but it is
-  not GP-based. If the report should match GP-based BO, use `optuna.samplers.GPSampler`
-  (Optuna ≥ 3.6). To be decided in Phase 3 and stated explicitly in the report.
+- **Now:** Optuna's `GPSampler` (Gaussian-process Bayesian optimization; Optuna 5.1) versus
+  Optuna's `RandomSampler` (Random Search). The search space is the interim report's
+  Table 4; `batch_size` is categorical and `epochs` an integer, both supported by
+  `GPSampler`.
+- **Why GP and not TPE:** Optuna's default sampler (TPE) is also a Bayesian, model-based
+  method, but it is not GP-based. `GPSampler` stays closer to the method proposed in the
+  interim report. TPE could be added later as a third method under the same protocol.
+- **Differences from `bayesopt` that remain:** the acquisition function and its
+  optimizer, the kernel and its hyperparameter priors, and the number of random initial
+  points (5 here, `bayesopt` default 4) are Optuna's, not MATLAB's.
 
 ## D7. Data findings not mentioned in the interim report (decided, Phase 1)
 
@@ -199,3 +206,50 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   machine). This matters most for the many HPO runs in Phase 3. Without augmentation the
   cached path produces exactly the same tensors as reading the files; a test checks this.
   If augmentation is added later (D5), it must be applied after the cache.
+- **DataLoader workers (Phase 3):** With the cache, worker processes only add
+  inter-process copying of the batches. On the development machine (Windows), one epoch
+  with 2 workers took ~35 s at batch size 16 and ~34 s at 64; without workers it took
+  10.9 s and 8.7 s, with identical losses and metrics. `data.num_workers` is therefore 0
+  (the Phase 2 baseline run used 2 workers; its results are unaffected).
+
+## D13. HPO protocol (decided, Phase 3)
+
+- **Interim report:** Bayesian optimization vs Random Search over the Table 4 search space,
+  objective = 1 − validation accuracy; budget and repetitions not fixed.
+- **Now:**
+  - One study per (method, sampler seed); **30 completed trials** per study (MATLAB
+    `bayesopt`'s default number of evaluations), sampler seeds **0, 1, 2** for both methods,
+    so both methods get exactly the same budget and seeds.
+  - Every trial trains with the base config's seed (42): same initialization and, for equal
+    batch sizes, the same batch order. The objective therefore depends only on the
+    hyperparameters (up to GPU non-determinism).
+  - Objective: validation error of the trial's **final-epoch model** (D10); no early
+    stopping and **no pruning**, so every trial is a complete training run and the two
+    methods are not affected differently by a pruning rule.
+  - A trial whose weights become NaN/inf stops early: they cannot recover, so the
+    remaining epochs would not change the final model's (constant) predictions. Its error
+    is recorded as is (NaN probabilities count as NORMAL).
+  - Studies are resumable at trial granularity (SQLite storage per study). A trial cut off
+    by a crash or a lost notebook session is marked failed and its parameters are queued
+    again, so it is repeated rather than replaced by a new configuration. Samplers keep
+    their random state in memory only; a resumed session derives its sampler seed from
+    (seed, number of existing trials), so it never repeats earlier draws. An uninterrupted
+    study is fully reproducible from its seed; a resumed one is not bit-identical to an
+    uninterrupted one.
+  - `GPSampler` is used with its default noise model (`deterministic_objective=False`),
+    because GPU training is not bit-exact and many configurations are expected to reach
+    nearly the same error.
+- **Known limitation:** the validation set is small for this task (1,044 images, one image
+  = 0.096 percentage points) and already saturated by the baseline (98.85 % accuracy).
+  Differences between methods may be within noise; results are reported over seeds as
+  best-so-far curves, the number of trials needed to beat the baseline, and the final test
+  results of the selected models (Phase 4).
+
+## D14. Final models of the HPO methods (decided, Phase 3)
+
+- **Interim report:** Not specified.
+- **Now:** Trial models are not saved (a checkpoint is ~435 MB). After a study, its best
+  configuration is written to `best_config.yaml` and retrained once with
+  `scripts/train.py`, which produces the full outputs (checkpoint, curves, predictions)
+  used in Phase 4. The retrained model's validation error can differ slightly from the
+  trial's because GPU training is not bit-exact; both values are reported.
