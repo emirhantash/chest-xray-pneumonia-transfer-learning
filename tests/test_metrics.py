@@ -65,3 +65,10 @@ def test_roc_points_span_the_unit_square():
     assert fpr[0] == 0 and tpr[0] == 0
     assert fpr[-1] == 1 and tpr[-1] == 1
     assert np.all(np.diff(fpr) >= 0) and np.all(np.diff(tpr) >= 0)
+
+
+def test_nan_probabilities_count_as_normal_and_auc_is_nan():
+    # A diverged model outputs NaN probabilities.
+    m = binary_metrics([0, 1, 1], [float("nan")] * 3, threshold=0.5)
+    assert (m["tn"], m["fn"], m["tp"]) == (1, 2, 0)
+    assert math.isnan(m["auc"])

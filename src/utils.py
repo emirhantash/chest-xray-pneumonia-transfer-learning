@@ -1,6 +1,8 @@
 """Reproducibility, configuration, and device helpers."""
 
 import random
+import subprocess
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -38,6 +40,26 @@ def load_config(path: str) -> dict:
     """Load a YAML configuration file into a nested dict."""
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
+
+
+def git_revision() -> dict:
+    """Commit hash of the repository and whether it has uncommitted changes.
+
+    Stored with runs and HPO studies for traceability; ``commit`` is None when git or the
+    repository is unavailable (e.g. a copied source tree).
+    """
+    repo = Path(__file__).resolve().parents[1]
+
+    def git(*args):
+        result = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    try:
+        commit = git("rev-parse", "HEAD")
+        status = git("status", "--porcelain", "--untracked-files=no")
+    except OSError:  # git is not installed
+        return {"commit": None, "dirty": None}
+    return {"commit": commit, "dirty": None if status is None else bool(status)}
 
 
 def get_device() -> torch.device:

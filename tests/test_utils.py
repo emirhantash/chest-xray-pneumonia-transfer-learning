@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from src.data import read_split_file
-from src.utils import get_device, load_config, set_seed
+from src.utils import get_device, git_revision, load_config, set_seed
 from tests.conftest import BASELINE_CONFIG, REPO_ROOT
 
 
@@ -65,3 +65,9 @@ def test_committed_split_file_matches_the_documented_split():
     entries = read_split_file(REPO_ROOT / load_config(BASELINE_CONFIG)["split"]["file"])
     counts = Counter(entries.values())
     assert counts == {("train", 0): 1072, ("train", 1): 3100, ("val", 0): 269, ("val", 1): 775}
+
+
+def test_git_revision_has_the_expected_keys():
+    info = git_revision()
+    assert set(info) == {"commit", "dirty"}
+    assert info["commit"] is None or len(info["commit"]) == 40

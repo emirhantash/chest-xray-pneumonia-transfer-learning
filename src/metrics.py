@@ -24,7 +24,8 @@ def binary_metrics(y_true, y_prob, threshold: float) -> dict:
     """Confusion matrix and summary metrics from labels and predicted P(pneumonia).
 
     A sample is predicted as pneumonia when ``y_prob >= threshold``. ``error`` is
-    ``1 - accuracy`` (the HPO objective). AUC is NaN when only one class is present.
+    ``1 - accuracy`` (the HPO objective). AUC is NaN when only one class is present or
+    when a probability is NaN (a diverged model); NaN probabilities count as NORMAL.
     """
     y_true = np.asarray(y_true, dtype=int)
     y_prob = np.asarray(y_prob, dtype=float)
@@ -35,7 +36,7 @@ def binary_metrics(y_true, y_prob, threshold: float) -> dict:
     recall = _ratio(tp, tp + fn)  # sensitivity
     specificity = _ratio(tn, tn + fp)
     precision = _ratio(tp, tp + fp)
-    two_classes = len(np.unique(y_true)) == 2
+    auc_defined = len(np.unique(y_true)) == 2 and bool(np.all(np.isfinite(y_prob)))
     return {
         **counts,
         "accuracy": accuracy,
@@ -45,7 +46,7 @@ def binary_metrics(y_true, y_prob, threshold: float) -> dict:
         "precision": precision,
         "f1": _ratio(2 * precision * recall, precision + recall),
         "balanced_accuracy": (recall + specificity) / 2,
-        "auc": float(roc_auc_score(y_true, y_prob)) if two_classes else float("nan"),
+        "auc": float(roc_auc_score(y_true, y_prob)) if auc_defined else float("nan"),
     }
 
 
