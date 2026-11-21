@@ -1,0 +1,5 @@
+# Development tools (tests and lint). Install after requirements.txt:
+#   pip install -r requirements-dev.txt
+pytest>=9.0
+# Pinned exactly: `ruff format --check` output can change between versions.
+ruff==0.17.6

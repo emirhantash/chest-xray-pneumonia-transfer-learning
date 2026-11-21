@@ -1,0 +1,26 @@
+[project]
+name = "chest-xray-pneumonia-transfer-learning"
+version = "0.1.0"
+description = "Pneumonia detection from pediatric chest X-rays with AlexNet transfer learning and hyperparameter optimization"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Emirhan Taş" }, { name = "Batuhan Çakmak" }]
+# Runtime dependencies live in requirements.txt (PyTorch must be installed from
+# the index that matches the hardware first); dev tools in requirements-dev.txt.
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
