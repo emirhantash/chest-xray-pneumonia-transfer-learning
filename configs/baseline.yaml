@@ -8,10 +8,12 @@ data:
   # Can be overridden from the command line with --data-root.
   root: data/chest_xray
   image_size: 227
-  num_workers: 2
   # Keep the resized grayscale images in RAM (~270 MB for train + val at 227 x 227).
   # Same batches as without the cache (there is no augmentation), but much faster epochs.
   cache: true
+  # With the cache, worker processes only add inter-process copying of the batches
+  # (measured ~3x slower epochs with 2 workers on Windows); use 2-4 without the cache.
+  num_workers: 0
 
 split:
   mode: patient        # patient | image
