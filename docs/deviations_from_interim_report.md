@@ -246,6 +246,23 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
     to the GP. It equals the error of a model that collapses to the majority class
     without diverging, so both failure modes are scored alike. The measured metrics of a
     diverged trial are still stored with it.
+  - **Collapsed trials (added 2026-11-23, after the seed-0 studies and GP seed 1):** some
+    trials end with finite weights but a "dead" network whose output is the same for
+    every image (validation loss ≈ ln 2, AUC 0.5). With balanced class weights, the
+    optimal constant output is P(pneumonia) ≈ 0.5, so whether such a model predicts
+    PNEUMONIA everywhere (error 0.2577) or NORMAL everywhere (error 0.7423) depends only
+    on which side of the 0.5 threshold a negligible bias difference lands. Both carry no
+    information. A trial whose final model predicts **a single class for every
+    validation image** is therefore also scored as the constant predictor (0.2577),
+    like a diverged trial; its measured metrics are kept (`collapsed` attribute,
+    `raw_values` in the analysis). Effect on the studies run before the rule: GP seed 0
+    trial 28 and Random seed 0 trial 16 (0.7423 → 0.2577) are rescored in the analysis
+    (`load_study_results`); all other single-class trials had already been scored
+    0.2577. For Random Search the rescoring is exact, because its proposals do not
+    depend on observed values. For GP seed 0, only the last trial (29) was proposed
+    after the GP had seen the raw 0.7423; GP seed 1 contained no such trial. Studies run
+    from then on (Random seed 1 is rescored the same way, GP and Random seed 2 use the
+    rule directly) are consistent.
   - The three trials run before this fix (seed-0 GP study, 2026-11-21) were discarded and
     all studies were started again with the fixed code.
   - Studies are resumable at trial granularity (SQLite storage per study). A trial cut off

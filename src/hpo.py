@@ -8,10 +8,12 @@ session is marked as failed and its parameters are queued again, so the interrup
 does not change which configurations are evaluated.
 
 Every trial trains with the base config's seed (same initialization and batch order for
-equal batch sizes) and returns the validation error of its final-epoch model. A trial
-that diverges (see :func:`has_diverged`) stops early and returns the error of the
-trivial classifier that predicts the majority training class for every image, so a
-failed run gets the same value on every device and with or without mixed precision.
+equal batch sizes) and returns the validation error of its final-epoch model. A failed
+trial returns the error of the trivial classifier that predicts the majority training
+class for every image: a trial that diverges (see :func:`has_diverged`, it stops early)
+and a trial whose final model predicts one class for every validation image (see
+:func:`predicts_single_class`). A failed run thus gets the same value on every device,
+with or without mixed precision, and whichever class a dead network happens to output.
 The original test set is never loaded.
 """
 
@@ -102,6 +104,13 @@ def has_diverged(model: torch.nn.Module, history: list[dict]) -> bool:
     return not weights_finite or history[-1]["train_nonfinite_fraction"] == 1.0
 
 
+def predicts_single_class(metrics: dict) -> bool:
+    """True if the model predicted the same class for every image (a collapsed model:
+    all NORMAL gives recall 0 and specificity 1, all PNEUMONIA the reverse)."""
+    recall, specificity = metrics["recall"], metrics["specificity"]
+    return (recall, specificity) in ((0.0, 1.0), (1.0, 0.0))
+
+
 def constant_predictor_error(train_labels, val_labels) -> float:
     """Validation error of always predicting the most frequent training class."""
     majority = int(np.bincount(train_labels).argmax())
@@ -118,7 +127,7 @@ class TrialObjective:
         splits = build_splits(base_cfg, include_test=False)
         self.fingerprint = split_fingerprint(splits, Path(base_cfg["data"]["root"]))
         self.train_labels = splits["train"][1]
-        self.diverged_error = constant_predictor_error(splits["train"][1], splits["val"][1])
+        self.constant_error = constant_predictor_error(splits["train"][1], splits["val"][1])
         self.datasets = build_datasets(splits, base_cfg)
 
     def __call__(self, trial: optuna.Trial) -> float:
@@ -152,18 +161,25 @@ class TrialObjective:
         )
         val = latest[0]
         diverged = has_diverged(model, history)
+        collapsed = not diverged and predicts_single_class(val)
         trial.set_user_attr("val_metrics", {k: float(val[k]) for k in TRIAL_METRICS})
         trial.set_user_attr("epochs_run", history[-1]["epoch"])
         trial.set_user_attr("diverged", diverged)
+        trial.set_user_attr("collapsed", collapsed)
         trial.set_user_attr("train_time_s", round(time.perf_counter() - start, 1))
         # The model is freed when this returns; the CUDA caching allocator reuses its
         # memory for the next trial.
-        if diverged:
-            print(
-                f"Trial {trial.number}: training diverged after epoch {history[-1]['epoch']}; "
-                f"stopped, scored as the constant predictor ({self.diverged_error:.4f})."
+        if diverged or collapsed:
+            reason = (
+                f"training diverged after epoch {history[-1]['epoch']}; stopped"
+                if diverged
+                else "the final model predicts a single class"
             )
-            return self.diverged_error
+            print(
+                f"Trial {trial.number}: {reason}, scored as the constant predictor "
+                f"({self.constant_error:.4f})."
+            )
+            return self.constant_error
         return val["error"]
 
 
@@ -198,7 +214,7 @@ def write_trials_csv(study: optuna.Study, path) -> None:
     """Human-readable table of all trials (state, objective, parameters, metrics)."""
     trials = study.get_trials(deepcopy=False)
     param_names = sorted({name for t in trials for name in t.params})
-    fields = ["number", "state", "value", *param_names, "epochs_run", "diverged"]
+    fields = ["number", "state", "value", *param_names, "epochs_run", "diverged", "collapsed"]
     fields += [f"val_{k}" for k in TRIAL_METRICS if k != "error"]
     fields += ["train_time_s", "retry_of"]
     with open(path, "w", newline="", encoding="utf-8") as f:
@@ -214,6 +230,7 @@ def write_trials_csv(study: optuna.Study, path) -> None:
                     **t.params,
                     "epochs_run": t.user_attrs.get("epochs_run"),
                     "diverged": t.user_attrs.get("diverged"),
+                    "collapsed": t.user_attrs.get("collapsed"),
                     **{f"val_{k}": metrics.get(k) for k in TRIAL_METRICS if k != "error"},
                     "train_time_s": t.user_attrs.get("train_time_s"),
                     "retry_of": t.user_attrs.get("retry_of"),
@@ -300,6 +317,7 @@ def run_study(
             study.set_user_attr("split_fingerprint", objective.fingerprint)
         if study.user_attrs.get("split_fingerprint") != objective.fingerprint:
             raise ValueError(f"Study {name} was run on a different train/val split.")
+        study.set_user_attr("constant_predictor_error", objective.constant_error)
         study.set_user_attr(f"session_{len(study.trials)}", _session_info(device))
 
         study.sampler = make_sampler(
@@ -318,6 +336,10 @@ def run_study(
             gc_after_trial=True,
         )
 
+    if "constant_predictor_error" not in study.user_attrs:  # studies from older versions
+        splits = build_splits(base_cfg, include_test=False)
+        error = constant_predictor_error(splits["train"][1], splits["val"][1])
+        study.set_user_attr("constant_predictor_error", error)
     write_trials_csv(study, study_dir / "trials.csv")
     export_best_config(study, base_cfg, study_dir / "best_config.yaml", f"best_{name}")
     if backup_path is not None:
@@ -340,20 +362,49 @@ def _session_info(device: torch.device) -> dict:
 # --- analysis ----------------------------------------------------------------------------
 
 
+def _is_failed(trial: optuna.trial.FrozenTrial) -> bool:
+    """Diverged, or a final model that predicts a single class (for trials run before
+    the ``collapsed`` attribute existed, derived from the stored metrics)."""
+    collapsed = trial.user_attrs.get("collapsed")
+    if collapsed is None:
+        metrics = trial.user_attrs.get("val_metrics")
+        collapsed = metrics is not None and predicts_single_class(metrics)
+    return bool(trial.user_attrs.get("diverged")) or collapsed
+
+
 def load_study_results(db_path) -> dict:
-    """Completed trials of the single study in ``db_path``, in trial order."""
+    """Completed trials of the single study in ``db_path``, in trial order.
+
+    ``values`` applies the failed-trial rule (constant-predictor error for diverged and
+    single-class trials, see the module docstring) to every trial, including trials
+    scored before the single-class part of the rule existed; ``raw_values`` are the
+    objective values stored by Optuna. A study that has just started may have no
+    completed trials; ``best_number`` is then ``None``.
+    """
     storage = f"sqlite:///{Path(db_path).resolve().as_posix()}"
     (name,) = optuna.get_all_study_names(storage)
     study = optuna.load_study(study_name=name, storage=storage)
     trials = study.get_trials(deepcopy=False, states=(TrialState.COMPLETE,))
+    failed = [_is_failed(t) for t in trials]
+    constant_error = study.user_attrs.get("constant_predictor_error")
+    if constant_error is None and any(failed):
+        raise ValueError(
+            f"Study {name} has failed trials but no 'constant_predictor_error' attribute; "
+            "rerun scripts/hpo.py for it once (it sets the attribute)."
+        )
+    raw = [t.value for t in trials]
+    values = [constant_error if f else v for f, v in zip(failed, raw, strict=True)]
+    best = int(np.argmin(values)) if values else None
     return {
         "name": name,
         "method": study.user_attrs["method"],
         "seed": study.user_attrs["seed"],
-        "values": [t.value for t in trials],
+        "values": values,
+        "raw_values": raw,
+        "failed": failed,
         "params": [t.params for t in trials],
         "train_time_s": [t.user_attrs.get("train_time_s", math.nan) for t in trials],
-        "best_number": study.best_trial.number,
+        "best_number": trials[best].number if best is not None else None,
     }
 
 
@@ -389,6 +440,7 @@ def summarize(
             "best_error": float(values[best_idx]),
             "best_trial_index": best_idx + 1,  # 1-based position among completed trials
             "median_error": float(np.median(values)),
+            "n_failed": int(sum(r.get("failed", []))),
             f"mean_top{top_k}_error": float(np.sort(values)[:top_k].mean()),
             "total_time_h": round(float(np.nansum(r["train_time_s"])) / 3600, 2),
             **{f"best_{k}": v for k, v in r["params"][best_idx].items()},

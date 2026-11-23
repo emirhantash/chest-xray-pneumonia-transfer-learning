@@ -166,7 +166,7 @@ Search (`RandomSampler`) under the same conditions (`configs/hpo.yaml`, details 
 | | |
 |---|---|
 | Search space | lr [1e-4, 1e-2] log, batch size {8, 16, 32, 64}, epochs [5, 30], weight decay [1e-5, 1e-3] log, momentum [0.8, 0.99] |
-| Objective | validation error (1 − accuracy) of the final-epoch model |
+| Objective | validation error (1 − accuracy) of the final-epoch model; a failed trial (diverged, or predicting one class for every image) gets the error of the majority-class predictor (0.2577) |
 | Budget | 30 completed trials per study; sampler seeds 0, 1, 2 for each method |
 | Fixed | training seed, split, preprocessing, class weights, AMP; no pruning |
 
@@ -182,8 +182,8 @@ Each study lives in `outputs/hpo/<method>_seed<seed>/` (`study.db`, `trials.csv`
 completed trial; the interrupted trial is repeated with the same parameters. With
 `--backup-dir`, the SQLite file stays on local disk and is copied (e.g. to Google Drive)
 after every trial. `compare_hpo.py` writes `summary.csv` (best, mean of the five best and
-median error, trials that beat the baseline, best error of the random initial design and
-of the later trials), the best-so-far curves of both methods with the baseline as
+median error, trials that beat the baseline, failed trials, best error of the random
+initial design and of the later trials), the best-so-far curves of both methods with the baseline as
 reference, all trial errors, and each hyperparameter vs the error. With the same seed,
 both methods share their first five (random) trials, so the comparison is paired. On the development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s
 depending on the batch size, i.e. roughly 2 hours per study.

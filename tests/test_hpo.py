@@ -19,6 +19,7 @@ from src.hpo import (
     load_study_results,
     make_sampler,
     mark_interrupted_trials,
+    predicts_single_class,
     requeue_failed_trials,
     run_study,
     session_seed,
@@ -209,6 +210,110 @@ def test_load_study_results(mini_study):
     assert (results["method"], results["seed"]) == ("random", 0)
     assert results["values"] == [t.value for t in study.get_trials(states=(TrialState.COMPLETE,))]
     assert len(results["params"]) == len(results["train_time_s"]) == 2
+    assert results["best_number"] == study.best_trial.number
+
+
+def test_load_study_results_without_completed_trials(tmp_path):
+    # A study that has just started (only a running trial) must not break the comparison.
+    db = tmp_path / "study.db"
+    study = optuna.create_study(study_name="gp_seed1", storage=f"sqlite:///{db.as_posix()}")
+    study.set_user_attr("method", "gp")
+    study.set_user_attr("seed", 1)
+    study.ask()
+    results = load_study_results(db)
+    assert results["values"] == [] and results["best_number"] is None
+
+
+def _study_with_trials(db, trials, constant_error=0.25):
+    """A finished study in ``db`` built from (value, user_attrs) pairs."""
+    study = optuna.create_study(study_name="gp_seed0", storage=f"sqlite:///{db.as_posix()}")
+    study.set_user_attr("method", "gp")
+    study.set_user_attr("seed", 0)
+    if constant_error is not None:
+        study.set_user_attr("constant_predictor_error", constant_error)
+    dist = {"lr": optuna.distributions.FloatDistribution(1e-4, 1e-2, log=True)}
+    for value, attrs in trials:
+        study.add_trial(
+            optuna.trial.create_trial(
+                value=value, params={"lr": 1e-3}, distributions=dist, user_attrs=attrs
+            )
+        )
+    return study
+
+
+def _metrics(recall, specificity):
+    return {"recall": recall, "specificity": specificity}
+
+
+def test_predicts_single_class():
+    assert predicts_single_class(_metrics(0.0, 1.0))  # all NORMAL
+    assert predicts_single_class(_metrics(1.0, 0.0))  # all PNEUMONIA
+    assert not predicts_single_class(_metrics(1.0, 1.0))  # perfect
+    assert not predicts_single_class(_metrics(0.99, 0.0))
+
+
+def test_load_study_results_rescores_failed_trials(tmp_path):
+    # Trials scored before the single-class rule (no "collapsed" attribute) are rescored
+    # from their stored metrics; the stored objective values stay available.
+    db = tmp_path / "study.db"
+    _study_with_trials(
+        db,
+        [
+            (0.75, {"diverged": False, "val_metrics": _metrics(0.0, 1.0)}),  # all NORMAL
+            (0.25, {"diverged": True, "val_metrics": _metrics(0.0, 1.0)}),
+            (0.01, {"diverged": False, "val_metrics": _metrics(0.99, 0.98)}),
+            (0.25, {"diverged": False, "collapsed": True, "val_metrics": _metrics(1.0, 0.0)}),
+        ],
+    )
+    results = load_study_results(db)
+    assert results["raw_values"] == [0.75, 0.25, 0.01, 0.25]
+    assert results["values"] == [0.25, 0.25, 0.01, 0.25]
+    assert results["failed"] == [True, True, False, True]
+    assert results["best_number"] == 2
+    assert summarize([results])[0]["n_failed"] == 3
+
+
+def test_load_study_results_needs_the_constant_error_for_failed_trials(tmp_path):
+    db = tmp_path / "study.db"
+    _study_with_trials(db, [(0.75, {"val_metrics": _metrics(0.0, 1.0)})], constant_error=None)
+    with pytest.raises(ValueError, match="constant_predictor_error"):
+        load_study_results(db)
+
+
+def test_single_class_trial_is_scored_as_the_constant_predictor(data_root, tmp_path, monkeypatch):
+    # A dead network outputs the same class for every image; which class depends on a
+    # negligible bias difference, so it is scored like a diverged trial.
+    def collapsed_fit(*args, **kwargs):
+        val = {k: 0.5 for k in ("accuracy", "f1", "auc", "loss")}
+        val.update(error=0.75, recall=0.0, specificity=1.0)
+        return [{"epoch": 1, "train_nonfinite_fraction": 0.0}], (val,)
+
+    monkeypatch.setattr("src.hpo.fit", collapsed_fit)
+    hpo, base = _mini_configs(data_root, tmp_path)
+    hpo["n_trials"] = 1
+    study = run_study(hpo, base, "random", 0, tmp_path / "collapse", device="cpu")
+    trial = study.trials[0]
+    assert trial.user_attrs["collapsed"] is True and trial.user_attrs["diverged"] is False
+    assert trial.user_attrs["val_metrics"]["error"] == 0.75  # measured value kept
+    assert trial.value == pytest.approx(study.user_attrs["constant_predictor_error"])
+    splits = build_splits(base, include_test=False)
+    assert trial.value == pytest.approx(
+        constant_predictor_error(splits["train"][1], splits["val"][1])
+    )
+
+
+def test_completed_old_study_gets_the_constant_error(data_root, tmp_path):
+    # Rerunning hpo.py on a finished study from an older version adds the attribute
+    # without training anything.
+    hpo, base = _mini_configs(data_root, tmp_path)
+    hpo["n_trials"] = 1
+    study_dir = tmp_path / "old"
+    study_dir.mkdir()
+    db = study_dir / "study.db"
+    _study_with_trials(db, [(0.75, {"val_metrics": _metrics(0.0, 1.0)})], constant_error=None)
+    study = run_study(hpo, base, "gp", 0, study_dir, device="cpu")
+    assert len(study.trials) == 1
+    assert load_study_results(db)["values"] == [study.user_attrs["constant_predictor_error"]]
 
 
 def test_diverging_trial_stops_early(data_root, tmp_path):
@@ -223,6 +328,7 @@ def test_diverging_trial_stops_early(data_root, tmp_path):
     assert trial.state == TrialState.COMPLETE
     assert trial.user_attrs["diverged"] is True
     assert trial.user_attrs["epochs_run"] < 3
+    assert trial.user_attrs["collapsed"] is False  # reported as diverged, not collapsed
     # Scored as the majority-class predictor, whatever the diverged model output.
     splits = build_splits(base, include_test=False)
     assert trial.value == pytest.approx(

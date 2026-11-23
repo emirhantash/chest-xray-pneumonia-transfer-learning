@@ -70,7 +70,8 @@ def main():
 
     if baseline_error is not None:
         print(f"Baseline val error: {baseline_error:.4f}")
-    header = ["study", "trials", "best", "top5", "median", "init", "after", "beat@", "n_beat", "h"]
+    header = ["study", "trials", "best", "top5", "median", "init", "after", "beat@", "n_beat"]
+    header += ["failed", "h"]
     print(f"{header[0]:16s}" + "".join(f"{h:>8s}" for h in header[1:]))
     for row in rows:
         cells = [
@@ -82,6 +83,7 @@ def main():
             row["after_startup_best_error"],
             row.get("trials_to_beat_baseline"),
             row.get("n_beat_baseline"),
+            row["n_failed"],
         ]
         cols = "".join(_cell(c) for c in cells)
         print(f"{row['study']:16s}{cols}{row['total_time_h']:8.2f}")
