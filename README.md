@@ -185,8 +185,25 @@ after every trial. `compare_hpo.py` writes `summary.csv` (best, mean of the five
 median error, trials that beat the baseline, failed trials, best error of the random
 initial design and of the later trials), the best-so-far curves of both methods with the baseline as
 reference, all trial errors, and each hyperparameter vs the error. With the same seed,
-both methods share their first five (random) trials, so the comparison is paired. On the development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s
-depending on the batch size, i.e. roughly 2 hours per study.
+both methods share their first five (random) trials, so the comparison is paired. On the
+development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s depending on the
+batch size, i.e. roughly 2 hours per study.
+
+## Final evaluation
+
+After all studies are finished and their best configurations retrained, the baseline and
+every retrained model are evaluated on the test set **once**
+([D15](docs/deviations_from_interim_report.md#d15-final-test-evaluation-decided-phase-4)):
+
+```bash
+python scripts/final_eval.py --final --data-root <path>   # writes outputs/final/
+```
+
+It reports every model's test metrics with 95 % confidence intervals from a patient-level
+bootstrap (2,000 replicates), the paired accuracy difference to the baseline and an exact
+McNemar test, and the mean ± standard deviation of each method over its three seeds
+(`model_metrics.csv`, `method_summary.csv`, `results.md`, `roc_test.png`). A model that
+already has test predictions is not evaluated again.
 
 ## Development
 
@@ -225,12 +242,16 @@ src/checkpoint.py          # atomic checkpoints, RNG state capture/restore
 src/plots.py               # learning curves, confusion matrix, ROC figures
 src/runner.py              # shared epoch loop, resumable training run, evaluation of a run
 src/hpo.py                 # Optuna studies (GP vs Random), resume logic, analysis
+src/stats.py               # patient-level bootstrap intervals, exact McNemar test
+src/report.py              # final test-set report (tables, comparisons with the baseline)
 scripts/check_data.py      # data/split/model sanity checks
 scripts/make_split.py      # computes and saves the split file
 scripts/train.py           # training entry point
 scripts/evaluate.py        # evaluation entry point (test set only with --final)
 scripts/hpo.py             # runs or resumes one HPO study
 scripts/compare_hpo.py     # compares the studies (table and plots)
+scripts/final_eval.py      # final test evaluation of the baseline and the HPO models
+scripts/check_patient_overlap.py   # are shared train/test patient IDs the same patients?
 notebooks/colab_kaggle_runner.ipynb   # runs the pipeline on Colab / Kaggle GPUs
 tests/                     # pytest suite on synthetic data (fixtures in conftest.py)
 docs/deviations_from_interim_report.md   # what changed since the interim report and why
@@ -268,10 +289,12 @@ with every HPO session).
 - **Channel-format artifact.** 283 training pneumonia images are stored as RGB; all other
   images are grayscale. All images are converted to grayscale first so that the channel
   format cannot act as a shortcut feature.
-- **Train/test overlap is unverified.** Some patient IDs appear in both the original train and
-  test folders. It is unknown whether these are the same patients or whether the numbering
-  restarts per folder. The original test split is kept unchanged for comparability with
-  published work.
+- **Train/test patient overlap.** 170 parsed patient IDs appear in both the original train
+  and test folders. An image-similarity check (`scripts/check_patient_overlap.py`, details
+  in [D8](docs/deviations_from_interim_report.md#d8-patient-ids-shared-between-original-train-and-test-folders-decided-phase-4))
+  finds no duplicates and no sign that they are the same patients (the numbering appears to
+  restart per folder), but cannot fully rule it out. The original test split is kept
+  unchanged for comparability with published work.
 - **Single source, pediatric only.** All images come from one center (Guangzhou Women and
   Children's Medical Center) and from patients aged 1–5, which limits how well results
   generalize to adults or other devices and sites.

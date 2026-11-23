@@ -76,6 +76,34 @@ def plot_roc(fpr, tpr, auc: float, path, title: str) -> None:
     fig.savefig(path, dpi=120)
 
 
+def plot_roc_overlay(curves: list[dict], path, title: str) -> None:
+    """Several ROC curves in one plot, with a zoomed inset of the top-left corner.
+
+    Each curve is a dict with ``label, fpr, tpr`` and optional ``color, linestyle``.
+    """
+    fig = Figure(figsize=(6, 5.5), layout="constrained")
+    ax = fig.subplots()
+    inset = ax.inset_axes([0.42, 0.12, 0.55, 0.5])
+    for c in curves:
+        style = {"color": c.get("color"), "linestyle": c.get("linestyle", "-"), "lw": 1.5}
+        ax.plot(c["fpr"], c["tpr"], label=c["label"], **style)
+        inset.plot(c["fpr"], c["tpr"], **style)
+    ax.plot([0, 1], [0, 1], "--", color="gray", lw=1, label="chance")
+    ax.set(
+        xlabel="false positive rate (1 - specificity)",
+        ylabel="true positive rate (recall)",
+        title=title,
+        xlim=(0, 1),
+        ylim=(0, 1.01),
+    )
+    inset.set(xlim=(0, 0.4), ylim=(0.8, 1.0))
+    inset.tick_params(labelsize=7)
+    inset.grid(alpha=0.3)
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left", fontsize=7)
+    fig.savefig(path, dpi=120)
+
+
 # --- hyperparameter optimization ---------------------------------------------------------
 
 METHOD_COLORS = {"gp": "C0", "random": "C1"}

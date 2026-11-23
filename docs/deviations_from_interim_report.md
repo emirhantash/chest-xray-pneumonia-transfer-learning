@@ -119,13 +119,26 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   distorts the aspect ratio. This is kept for consistency with the interim report and noted
   as a limitation.
 
-## D8. Patient IDs shared between original train and test folders (open, unverified)
+## D8. Patient IDs shared between original train and test folders (decided, Phase 4)
 
 - `scripts/check_data.py` reports how many parsed patient IDs appear in both the original
-  train and test folders (170 on 2026-11-21). It is **not verified** whether these are the
-  same patients or whether the ID numbering simply restarts per folder. The original
-  test set is used unchanged for comparability with the literature; this should be
-  mentioned as a possible limitation rather than claimed as leakage.
+  train and test folders (170 on 2026-11-21). The original test set is used unchanged
+  for comparability with the literature.
+- **Check (2026-11-24, `scripts/check_patient_overlap.py`):** the 170 shared IDs (320
+  test images) are most likely **not the same patients**; the ID numbering appears to
+  restart per folder.
+  - No exact duplicate files and no near-duplicate images (thumbnail correlation
+    > 0.99) between train and test.
+  - Positive control: within train, the most similar other image (32 × 32 grayscale
+    thumbnail correlation) of an image of a multi-image patient comes from the same
+    patient in 165 / 3,445 cases (4.8 %, chance ≈ 0.05 %).
+  - Test images with a shared ID: their most similar train image has that ID in
+    **0 / 320** cases, where ~15 would be expected if they were the same patients
+    (binomial p ≈ 1.5e-7).
+- **Limitation:** the control pairs are images of the same patient within one folder,
+  often from the same visit; follow-up images across folders could look less alike. The
+  check therefore shows no evidence of shared patients rather than proving their
+  absence, and it is reported as such.
 
 ## D9. The patient-level split depends on the scikit-learn version (decided, Phase 1.5)
 
@@ -301,3 +314,25 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   `scripts/train.py`, which produces the full outputs (checkpoint, curves, predictions)
   used in Phase 4. The retrained model's validation error can differ slightly from the
   trial's because GPU training is not bit-exact; both values are reported.
+
+## D15. Final test evaluation (decided, Phase 4)
+
+- **Interim report:** test accuracy, sensitivity, specificity, precision, F1 and ROC/AUC of
+  the baseline and of the optimized model; no uncertainty estimates or significance tests.
+- **Now:**
+  - The test set is used once, by `scripts/final_eval.py --final`, after all training
+    and HPO decisions are fixed. It evaluates the baseline and the retrained best model
+    of **every** study (D14), not a single "winner": all studies reach the same best
+    validation error (D13), so picking one of them would be an arbitrary choice made on
+    a tie. Results are reported per model and as mean ± standard deviation over the
+    three seeds of each method.
+  - **95 % confidence intervals** come from a patient-level (cluster) bootstrap with
+    2,000 replicates: whole patients are resampled because images of the same patient
+    are not independent. All models share the same replicates, so the interval of the
+    accuracy difference to the baseline is a paired interval.
+  - **Paired significance:** exact (binomial) McNemar test of each HPO model against the
+    baseline on the same test images. It treats images as independent, so with several
+    images per patient its p-values are somewhat optimistic; the bootstrap interval of
+    the difference is the more conservative statement. No correction for multiple
+    comparisons is applied; the per-method summary is the main result.
+  - The decision threshold stays at 0.5 (never tuned, D10).
