@@ -258,6 +258,18 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   - `GPSampler` is used with its default noise model (`deterministic_objective=False`),
     because GPU training is not bit-exact and many configurations are expected to reach
     nearly the same error.
+  - **Shared initial design:** `GPSampler` draws its first `n_startup_trials` (5)
+    configurations with a `RandomSampler` seeded like itself, so the GP and Random Search
+    studies with the same seed start with the **same five trials** (verified for seed 0).
+    This is a paired design (common random numbers): differences between the methods come
+    only from trials 6–30, where the GP proposes points and Random Search keeps sampling.
+    A best value or "trials to beat the baseline" that falls inside the first five trials
+    is therefore not credited to either method; `compare_hpo.py` reports the best error of
+    the initial design and of the later trials separately.
+  - **Summary measures:** because many configurations tie near the best error on this
+    validation set (see the limitation below), each study is also summarized by the mean
+    of its five lowest errors and by the number of trials that beat the baseline, which
+    reflect how consistently a method proposes good configurations.
 - **Known limitation:** the validation set is small for this task (1,044 images, one image
   = 0.096 percentage points) and already saturated by the baseline (98.85 % accuracy).
   Differences between methods may be within noise; results are reported over seeds as

@@ -181,9 +181,11 @@ Each study lives in `outputs/hpo/<method>_seed<seed>/` (`study.db`, `trials.csv`
 `best_config.yaml`). Rerunning the same command resumes an interrupted study at the last
 completed trial; the interrupted trial is repeated with the same parameters. With
 `--backup-dir`, the SQLite file stays on local disk and is copied (e.g. to Google Drive)
-after every trial. `compare_hpo.py` writes `summary.csv`, the best-so-far curves of both
-methods with the baseline as reference, all trial errors, and each hyperparameter vs the
-error. On the development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s
+after every trial. `compare_hpo.py` writes `summary.csv` (best, mean of the five best and
+median error, trials that beat the baseline, best error of the random initial design and
+of the later trials), the best-so-far curves of both methods with the baseline as
+reference, all trial errors, and each hyperparameter vs the error. With the same seed,
+both methods share their first five (random) trials, so the comparison is paired. On the development GPU (RTX 3050 Ti, AMP, image cache) one epoch takes 9–18 s
 depending on the batch size, i.e. roughly 2 hours per study.
 
 ## Development

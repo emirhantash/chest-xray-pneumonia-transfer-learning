@@ -362,8 +362,21 @@ def best_so_far(values) -> np.ndarray:
     return np.minimum.accumulate(np.asarray(values, dtype=float))
 
 
-def summarize(results: list[dict], baseline_error: float | None = None) -> list[dict]:
-    """One summary row per study, sorted by method and seed."""
+def summarize(
+    results: list[dict],
+    baseline_error: float | None = None,
+    n_startup_trials: int | None = None,
+    top_k: int = 5,
+) -> list[dict]:
+    """One summary row per study, sorted by method and seed.
+
+    Besides the best error, it reports measures that still separate the methods when
+    many trials tie at the best value on a saturated validation set: the mean of the
+    ``top_k`` lowest errors and the number of trials better than the baseline. With
+    ``n_startup_trials``, it also splits the study into the random initial design and
+    the trials after it (``GPSampler`` and ``RandomSampler`` with the same seed draw the
+    same initial design, so only the later trials show what the GP adds).
+    """
     rows = []
     for r in sorted(results, key=lambda r: (r["method"], r["seed"])):
         values = np.asarray(r["values"], dtype=float)
@@ -376,11 +389,18 @@ def summarize(results: list[dict], baseline_error: float | None = None) -> list[
             "best_error": float(values[best_idx]),
             "best_trial_index": best_idx + 1,  # 1-based position among completed trials
             "median_error": float(np.median(values)),
+            f"mean_top{top_k}_error": float(np.sort(values)[:top_k].mean()),
             "total_time_h": round(float(np.nansum(r["train_time_s"])) / 3600, 2),
             **{f"best_{k}": v for k, v in r["params"][best_idx].items()},
         }
         if baseline_error is not None:
             better = np.flatnonzero(values < baseline_error)
             row["trials_to_beat_baseline"] = int(better[0]) + 1 if better.size else None
+            row["n_beat_baseline"] = int(better.size)
+        if n_startup_trials is not None:
+            startup, later = values[:n_startup_trials], values[n_startup_trials:]
+            row["startup_best_error"] = float(startup.min())
+            row["after_startup_best_error"] = float(later.min()) if later.size else None
+            row["improved_after_startup"] = bool(later.size and later.min() < startup.min())
         rows.append(row)
     return rows

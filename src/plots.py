@@ -96,11 +96,18 @@ def _baseline_line(ax, baseline_error):
         ax.axhline(baseline_error, color="gray", ls="--", label=f"baseline ({baseline_error:.4f})")
 
 
-def plot_best_so_far(results: list[dict], baseline_error, path) -> None:
+def plot_best_so_far(
+    results: list[dict], baseline_error, path, n_startup_trials: int | None = None
+) -> None:
     """Best validation error so far vs completed trials: each seed (thin) and the mean
-    over seeds with its min-max band (thick), per method."""
+    over seeds with its min-max band (thick), per method. ``n_startup_trials`` shades
+    the random initial design."""
     fig = Figure(figsize=(7, 4.5), layout="constrained")
     ax = fig.subplots()
+    if n_startup_trials:
+        ax.axvspan(
+            0.5, n_startup_trials + 0.5, color="gray", alpha=0.12, label="random initial design"
+        )
     for method, runs in _by_method(results).items():
         color = METHOD_COLORS.get(method)
         curves = [np.minimum.accumulate(np.asarray(r["values"], dtype=float)) for r in runs]
@@ -109,7 +116,8 @@ def plot_best_so_far(results: list[dict], baseline_error, path) -> None:
         n = min(len(c) for c in curves)
         stacked = np.stack([c[:n] for c in curves])
         x = np.arange(1, n + 1)
-        label = f"{METHOD_LABELS.get(method, method)} (mean of {len(curves)} seeds)"
+        seeds = f"{len(curves)} seed" + ("s" if len(curves) > 1 else "")
+        label = f"{METHOD_LABELS.get(method, method)} (mean of {seeds})"
         ax.plot(x, stacked.mean(axis=0), color=color, lw=2.5, label=label)
         ax.fill_between(x, stacked.min(axis=0), stacked.max(axis=0), color=color, alpha=0.15)
     _baseline_line(ax, baseline_error)

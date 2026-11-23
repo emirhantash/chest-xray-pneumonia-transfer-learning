@@ -274,12 +274,27 @@ def test_summarize():
     assert rnd["trials_to_beat_baseline"] is None
     assert gp["total_time_h"] == pytest.approx(4 * 600 / 3600, abs=0.01)
     assert gp["best_lr"] == pytest.approx(3e-3)
+    assert gp["n_beat_baseline"] == 1 and rnd["n_beat_baseline"] == 0
+    assert gp["mean_top5_error"] == pytest.approx(np.mean([0.3, 0.02, 0.01, 0.012]))
+    assert "startup_best_error" not in gp
+
+
+def test_summarize_splits_the_initial_design():
+    gp, rnd = summarize(_fake_results(), n_startup_trials=2, top_k=2)
+    assert gp["mean_top2_error"] == pytest.approx(0.011)
+    assert (gp["startup_best_error"], gp["after_startup_best_error"]) == (0.02, 0.01)
+    assert gp["improved_after_startup"]
+    assert (rnd["startup_best_error"], rnd["after_startup_best_error"]) == (0.04, 0.03)
+    # A study that has not left its initial design yet has no later trials.
+    (only_startup,) = summarize(_fake_results()[1:], n_startup_trials=5)
+    assert only_startup["after_startup_best_error"] is None
+    assert not only_startup["improved_after_startup"]
 
 
 def test_hpo_plots_are_written(tmp_path):
     results = _fake_results()
     space = {"lr": {"type": "float", "log": True}, "batch_size": {"type": "categorical"}}
-    plot_best_so_far(results, 0.0115, tmp_path / "a.png")
+    plot_best_so_far(results, 0.0115, tmp_path / "a.png", n_startup_trials=2)
     plot_trial_errors(results, 0.0115, tmp_path / "b.png")
     plot_params_vs_error(results, space, tmp_path / "c.png")
     assert all((tmp_path / name).stat().st_size > 0 for name in ("a.png", "b.png", "c.png"))

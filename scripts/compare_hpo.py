@@ -22,6 +22,14 @@ from src.plots import plot_best_so_far, plot_params_vs_error, plot_trial_errors
 from src.utils import load_config
 
 
+def _cell(value) -> str:
+    if value is None:
+        return f"{'-':>8s}"
+    if isinstance(value, float):
+        return f"{value:8.4f}"
+    return f"{value:>8}"
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", default="configs/hpo.yaml")
@@ -47,7 +55,8 @@ def main():
     if baseline_path.is_file():
         baseline_error = json.loads(baseline_path.read_text(encoding="utf-8"))["metrics"]["error"]
 
-    rows = summarize(results, baseline_error)
+    n_startup = hpo_cfg["n_startup_trials"]
+    rows = summarize(results, baseline_error, n_startup_trials=n_startup)
     out_dir.mkdir(parents=True, exist_ok=True)
     fields = list(dict.fromkeys(key for row in rows for key in row))
     with open(out_dir / "summary.csv", "w", newline="", encoding="utf-8") as f:
@@ -55,20 +64,27 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
 
-    plot_best_so_far(results, baseline_error, out_dir / "best_so_far.png")
+    plot_best_so_far(results, baseline_error, out_dir / "best_so_far.png", n_startup)
     plot_trial_errors(results, baseline_error, out_dir / "trial_errors.png")
     plot_params_vs_error(results, hpo_cfg["search_space"], out_dir / "params_vs_error.png")
 
     if baseline_error is not None:
         print(f"Baseline val error: {baseline_error:.4f}")
-    print(f"{'study':16s} {'trials':>6s} {'best':>8s} {'median':>8s} {'beat@':>6s} {'hours':>6s}")
+    header = ["study", "trials", "best", "top5", "median", "init", "after", "beat@", "n_beat", "h"]
+    print(f"{header[0]:16s}" + "".join(f"{h:>8s}" for h in header[1:]))
     for row in rows:
-        beat = row.get("trials_to_beat_baseline")
-        print(
-            f"{row['study']:16s} {row['n_trials']:6d} {row['best_error']:8.4f} "
-            f"{row['median_error']:8.4f} {beat if beat is not None else '-':>6} "
-            f"{row['total_time_h']:6.2f}"
-        )
+        cells = [
+            row["n_trials"],
+            row["best_error"],
+            row["mean_top5_error"],
+            row["median_error"],
+            row["startup_best_error"],
+            row["after_startup_best_error"],
+            row.get("trials_to_beat_baseline"),
+            row.get("n_beat_baseline"),
+        ]
+        cols = "".join(_cell(c) for c in cells)
+        print(f"{row['study']:16s}{cols}{row['total_time_h']:8.2f}")
     print(f"Outputs: {out_dir}")
 
 
