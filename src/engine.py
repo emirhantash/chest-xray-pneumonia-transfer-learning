@@ -39,16 +39,20 @@ def _batch_weight(criterion: nn.CrossEntropyLoss, labels: torch.Tensor) -> torch
 
 
 def train_one_epoch(model, loader, criterion, optimizer, scaler, device, amp: bool) -> dict:
-    """One pass over ``loader``; returns the epoch's mean loss and running accuracy.
+    """One pass over ``loader``; returns the epoch's mean loss, running accuracy, and the
+    fraction of batches whose loss was NaN/inf.
 
-    Both are measured in training mode (dropout active) while the weights change, as is
-    usual for training curves; validation metrics come from :func:`evaluate`.
+    Loss and accuracy are measured in training mode (dropout active) while the weights
+    change, as is usual for training curves; validation metrics come from
+    :func:`evaluate`. A non-finite fraction of 1.0 means that no batch of the epoch
+    produced a usable loss: training has diverged (see ``src/hpo.py``).
     """
     model.train()
     loss_sum = torch.zeros((), device=device)
     weight_sum = torch.zeros((), device=device)
     correct = torch.zeros((), dtype=torch.long, device=device)
-    n_samples = 0
+    n_nonfinite = torch.zeros((), dtype=torch.long, device=device)
+    n_samples = n_batches = 0
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
@@ -64,16 +68,24 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, amp: bo
         loss_sum += loss.detach().float() * batch_weight
         weight_sum += batch_weight
         correct += (logits.argmax(dim=1) == labels).sum()
+        n_nonfinite += ~torch.isfinite(loss.detach())
         n_samples += labels.numel()
-    return {"loss": (loss_sum / weight_sum).item(), "accuracy": correct.item() / n_samples}
+        n_batches += 1
+    return {
+        "loss": (loss_sum / weight_sum).item(),
+        "accuracy": correct.item() / n_samples,
+        "nonfinite_fraction": n_nonfinite.item() / n_batches,
+    }
 
 
 @torch.inference_mode()
-def evaluate(model, loader, criterion, device, amp: bool, threshold: float):
-    """Evaluate in eval mode; returns ``(metrics, y_true, y_prob)``.
+def evaluate(model, loader, criterion, device, threshold: float):
+    """Evaluate in eval mode and float32; returns ``(metrics, y_true, y_prob)``.
 
     ``y_prob`` is the softmax probability of PNEUMONIA; ``metrics`` adds the epoch's
-    mean (weighted) loss to :func:`src.metrics.binary_metrics`.
+    mean (weighted) loss to :func:`src.metrics.binary_metrics`. Evaluation never uses
+    mixed precision, even when training does: activations of a badly trained model can
+    exceed the float16 range (65,504) and turn every prediction into NaN (D11).
     """
     model.eval()
     loss_sum = torch.zeros((), device=device)
@@ -82,9 +94,7 @@ def evaluate(model, loader, criterion, device, amp: bool, threshold: float):
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
-        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp):
-            logits = model(images)
-        logits = logits.float()
+        logits = model(images).float()
         batch_weight = _batch_weight(criterion, labels)
         loss_sum += criterion(logits, labels) * batch_weight
         weight_sum += batch_weight

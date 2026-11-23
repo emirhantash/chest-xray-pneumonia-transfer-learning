@@ -195,6 +195,13 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   2026-11-21). The baseline and all HPO trials use the same setting, so the comparison
   between methods is not affected. Results on CUDA and on CPU/MPS are therefore not
   bit-identical.
+- **Evaluation is always float32 (Phase 3 fix):** in the first HPO trials, a configuration
+  with a too-high learning rate (lr 7.3e-3, batch size 8) produced activations of up to
+  5.6 × 10⁷, far beyond the float16 range (65,504). With mixed-precision evaluation every
+  logit became NaN and every image was predicted NORMAL (val error 0.742), although the
+  same weights evaluated in float32 predicted PNEUMONIA everywhere (error 0.258). Mixed
+  precision is therefore used for training only; validation and test evaluation run in
+  float32 (about 1 s extra per epoch). Training-side behaviour is covered in D13.
 
 ## D12. In-memory image cache (decided, Phase 2)
 
@@ -226,9 +233,21 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   - Objective: validation error of the trial's **final-epoch model** (D10); no early
     stopping and **no pruning**, so every trial is a complete training run and the two
     methods are not affected differently by a pruning rule.
-  - A trial whose weights become NaN/inf stops early: they cannot recover, so the
-    remaining epochs would not change the final model's (constant) predictions. Its error
-    is recorded as is (NaN probabilities count as NORMAL).
+  - **Diverged trials:** a trial stops early when its weights become NaN/inf or when no
+    batch of an epoch produced a finite loss; neither can recover. Such a trial is scored
+    with the error of the trivial classifier that predicts the majority training class
+    (PNEUMONIA) for every image: 269 / 1,044 = **0.2577** on the validation set. The
+    diagnosis that led to this rule (2026-11-23): with lr 7.3e-3 and batch size 8,
+    float32 training reached NaN weights within the first epoch, while mixed-precision
+    training kept the weights finite but the gradient scaler fell to 0 and skipped every
+    step, freezing a model that predicts PNEUMONIA everywhere. The same failure would
+    thus have been scored 0.742 or 0.258 depending on the device and precision; a fixed
+    value makes the objective device-independent and avoids feeding an arbitrary outlier
+    to the GP. It equals the error of a model that collapses to the majority class
+    without diverging, so both failure modes are scored alike. The measured metrics of a
+    diverged trial are still stored with it.
+  - The three trials run before this fix (seed-0 GP study, 2026-11-21) were discarded and
+    all studies were started again with the fixed code.
   - Studies are resumable at trial granularity (SQLite storage per study). A trial cut off
     by a crash or a lost notebook session is marked failed and its parameters are queued
     again, so it is repeated rather than replaced by a new configuration. Samplers keep

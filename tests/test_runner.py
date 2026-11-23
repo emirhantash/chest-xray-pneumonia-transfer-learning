@@ -59,6 +59,7 @@ def test_training_writes_all_outputs(completed_run):
         rows = list(csv.DictReader(f))
     assert [int(r["epoch"]) for r in rows] == [1, 2]
     assert list(rows[0]) == HISTORY_FIELDS
+    assert all(float(r["train_nonfinite_fraction"]) == 0.0 for r in rows)
 
     report = json.loads((run_dir / "val_metrics.json").read_text(encoding="utf-8"))
     assert report["epoch"] == 2  # the final-epoch model is the result

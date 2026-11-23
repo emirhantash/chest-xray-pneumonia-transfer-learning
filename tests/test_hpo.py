@@ -5,13 +5,17 @@ import shutil
 import numpy as np
 import optuna
 import pytest
+import torch
 import yaml
 from optuna.trial import TrialState
 
+from src.data import build_splits
 from src.hpo import (
     _check_study_settings,
     apply_params,
     best_so_far,
+    constant_predictor_error,
+    has_diverged,
     load_study_results,
     make_sampler,
     mark_interrupted_trials,
@@ -219,6 +223,29 @@ def test_diverging_trial_stops_early(data_root, tmp_path):
     assert trial.state == TrialState.COMPLETE
     assert trial.user_attrs["diverged"] is True
     assert trial.user_attrs["epochs_run"] < 3
+    # Scored as the majority-class predictor, whatever the diverged model output.
+    splits = build_splits(base, include_test=False)
+    assert trial.value == pytest.approx(
+        constant_predictor_error(splits["train"][1], splits["val"][1])
+    )
+
+
+def test_constant_predictor_error():
+    # Majority training class is 1 -> every val image predicted 1 -> error = share of 0s.
+    assert constant_predictor_error([0, 1, 1, 1], [0, 0, 1, 1, 1]) == pytest.approx(2 / 5)
+    assert constant_predictor_error([0, 0, 1], [0, 1, 1, 1]) == pytest.approx(3 / 4)
+
+
+def test_has_diverged():
+    model = torch.nn.Linear(2, 2)
+    healthy = [{"train_nonfinite_fraction": 0.0}]
+    assert not has_diverged(model, healthy)
+    # Some non-finite batches are tolerated; a whole epoch of them is divergence.
+    assert not has_diverged(model, [{"train_nonfinite_fraction": 0.9}])
+    assert has_diverged(model, [{"train_nonfinite_fraction": 1.0}])
+    with torch.no_grad():
+        model.weight[0, 0] = float("nan")
+    assert has_diverged(model, healthy)
 
 
 # --- analysis ----------------------------------------------------------------------------

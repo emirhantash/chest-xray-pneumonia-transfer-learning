@@ -8,7 +8,10 @@ session is marked as failed and its parameters are queued again, so the interrup
 does not change which configurations are evaluated.
 
 Every trial trains with the base config's seed (same initialization and batch order for
-equal batch sizes) and returns the validation error of its final-epoch model.
+equal batch sizes) and returns the validation error of its final-epoch model. A trial
+that diverges (see :func:`has_diverged`) stops early and returns the error of the
+trivial classifier that predicts the majority training class for every image, so a
+failed run gets the same value on every device and with or without mixed precision.
 The original test set is never loaded.
 """
 
@@ -91,8 +94,18 @@ def apply_params(base_cfg: dict, params: dict) -> dict:
     return cfg
 
 
-def _weights_are_finite(model: torch.nn.Module) -> bool:
-    return all(torch.isfinite(p).all() for p in model.parameters())
+def has_diverged(model: torch.nn.Module, history: list[dict]) -> bool:
+    """True if training cannot recover: NaN/inf weights, or a whole epoch without a
+    single finite loss (with AMP, the gradient scaler then skips every step and the
+    model is frozen; in float32 the weights become NaN)."""
+    weights_finite = all(torch.isfinite(p).all() for p in model.parameters())
+    return not weights_finite or history[-1]["train_nonfinite_fraction"] == 1.0
+
+
+def constant_predictor_error(train_labels, val_labels) -> float:
+    """Validation error of always predicting the most frequent training class."""
+    majority = int(np.bincount(train_labels).argmax())
+    return float(np.mean(np.asarray(val_labels) != majority))
 
 
 class TrialObjective:
@@ -105,6 +118,7 @@ class TrialObjective:
         splits = build_splits(base_cfg, include_test=False)
         self.fingerprint = split_fingerprint(splits, Path(base_cfg["data"]["root"]))
         self.train_labels = splits["train"][1]
+        self.diverged_error = constant_predictor_error(splits["train"][1], splits["val"][1])
         self.datasets = build_datasets(splits, base_cfg)
 
     def __call__(self, trial: optuna.Trial) -> float:
@@ -134,20 +148,22 @@ class TrialObjective:
             cfg,
             device,
             amp,
-            on_epoch_end=lambda epoch, hist: not _weights_are_finite(model),
+            on_epoch_end=lambda epoch, hist: has_diverged(model, hist),
         )
         val = latest[0]
-        diverged = not _weights_are_finite(model)
+        diverged = has_diverged(model, history)
         trial.set_user_attr("val_metrics", {k: float(val[k]) for k in TRIAL_METRICS})
         trial.set_user_attr("epochs_run", history[-1]["epoch"])
         trial.set_user_attr("diverged", diverged)
         trial.set_user_attr("train_time_s", round(time.perf_counter() - start, 1))
-        if diverged:
-            # NaN weights cannot recover: the remaining epochs would not change the
-            # final model's (constant) predictions, so its error is final.
-            print(f"Trial {trial.number}: weights became NaN/inf; training stopped.")
         # The model is freed when this returns; the CUDA caching allocator reuses its
         # memory for the next trial.
+        if diverged:
+            print(
+                f"Trial {trial.number}: training diverged after epoch {history[-1]['epoch']}; "
+                f"stopped, scored as the constant predictor ({self.diverged_error:.4f})."
+            )
+            return self.diverged_error
         return val["error"]
 
 

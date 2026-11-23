@@ -48,7 +48,7 @@ VAL_LOG_KEYS = [
     "auc",
 ]
 HISTORY_FIELDS = (
-    ["epoch", "lr", "train_loss", "train_accuracy"]
+    ["epoch", "lr", "train_loss", "train_accuracy", "train_nonfinite_fraction"]
     + [f"val_{k}" for k in VAL_LOG_KEYS]
     + ["epoch_time_s"]
 )
@@ -160,7 +160,7 @@ def fit(
         train_stats = train_one_epoch(
             model, loaders["train"], criterion, optimizer, scaler, device, amp
         )
-        latest = evaluate(model, loaders["val"], criterion, device, amp, threshold)
+        latest = evaluate(model, loaders["val"], criterion, device, threshold)
         val = latest[0]
         history.append(
             {
@@ -168,6 +168,7 @@ def fit(
                 "lr": optimizer.param_groups[0]["lr"],
                 "train_loss": train_stats["loss"],
                 "train_accuracy": train_stats["accuracy"],
+                "train_nonfinite_fraction": train_stats["nonfinite_fraction"],
                 **{f"val_{k}": val[k] for k in VAL_LOG_KEYS},
                 "epoch_time_s": round(time.perf_counter() - start, 2),
             }
@@ -291,7 +292,7 @@ def run_training(
         return {"epoch": history[-1]["epoch"], "completed": False, "val_metrics": latest[0]}
 
     if latest is None:  # the run was already complete: recompute the final predictions
-        latest = evaluate(model, loaders["val"], criterion, device, amp, threshold)
+        latest = evaluate(model, loaders["val"], criterion, device, threshold)
     val, y_true, y_prob = latest
     best = min(history, key=lambda row: row["val_error"])
     _write_json(
@@ -341,7 +342,6 @@ def evaluate_run(
         )
 
     device = torch.device(device) if device else get_device()
-    amp = use_amp(cfg, device)
     threshold = cfg["eval"]["threshold"]
     generator = set_seed(cfg["seed"])
     root = Path(cfg["data"]["root"])
@@ -353,7 +353,7 @@ def evaluate_run(
     model = build_alexnet(cfg["model"]["num_classes"], pretrained=False).to(device)
     model.load_state_dict(ckpt["model"])
     criterion = build_criterion(splits["train"][1], cfg, device)
-    metrics, y_true, y_prob = evaluate(model, loader, criterion, device, amp, threshold)
+    metrics, y_true, y_prob = evaluate(model, loader, criterion, device, threshold)
 
     out_dir = run_dir / f"eval_{split}"
     out_dir.mkdir(exist_ok=True)
