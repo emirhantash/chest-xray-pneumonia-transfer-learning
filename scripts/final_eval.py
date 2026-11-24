@@ -12,7 +12,8 @@ use the log-odds, because confident probabilities saturate at 1.0 and tie.
 
 Writes to --out: model_metrics.csv (metrics, 95 % patient-level bootstrap intervals,
 McNemar test and accuracy difference vs the baseline), method_summary.csv (mean ± std
-over seeds), results.md (both tables in Markdown), and roc_test.png.
+over seeds), patient_metrics.csv (one prediction per patient: the maximum over its
+images), results.md (the tables in Markdown), and roc_test.png.
 """
 
 import argparse
@@ -28,6 +29,7 @@ from src.report import (
     markdown_tables,
     method_rows,
     model_rows,
+    patient_rows,
     read_predictions,
     run_method,
     write_csv,
@@ -93,7 +95,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     write_csv(rows, out / "model_metrics.csv")
     write_csv(methods, out / "method_summary.csv")
-    tables = markdown_tables(rows, methods)
+    patients = patient_rows(preds, threshold)
+    write_csv(patients, out / "patient_metrics.csv")
+    tables = markdown_tables(rows, methods, patients)
     (out / "results.md").write_text(tables, encoding="utf-8")
 
     curves = []

@@ -13,6 +13,16 @@ Y_PROB = [0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.7, 0.3, 0.2, 0.1]
 # At threshold 0.5: predictions 1 1 1 1 0 0 | 1 0 0 0 -> tp 4, fn 2, fp 1, tn 3.
 
 
+def test_pr_auc_and_brier():
+    # Ranked: positive (P = 1, recall 0.5), negative, positive (P = 2/3, recall 1).
+    m = binary_metrics([1, 0, 1], [0.9, 0.8, 0.1], threshold=0.5)
+    assert m["pr_auc"] == pytest.approx(0.5 * 1 + 0.5 * 2 / 3)
+    assert m["brier"] == pytest.approx((0.1**2 + 0.8**2 + 0.9**2) / 3)
+    assert binary_metrics([0, 1, 1], [0.1, 0.9, 0.8], threshold=0.5)["pr_auc"] == 1.0
+    diverged = binary_metrics([0, 1], [float("nan")] * 2, threshold=0.5)
+    assert math.isnan(diverged["pr_auc"]) and math.isnan(diverged["brier"])
+
+
 def test_auc_uses_the_scores_when_given():
     # Confident predictions saturate to probability 1.0 and tie; their log-odds do not.
     y_true, y_prob = [0, 1, 0, 1], [1.0, 1.0, 0.1, 0.2]

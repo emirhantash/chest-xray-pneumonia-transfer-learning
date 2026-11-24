@@ -21,6 +21,8 @@ CI_METRICS = (
     "f1",
     "balanced_accuracy",
     "auc",
+    "pr_auc",
+    "brier",
 )
 
 

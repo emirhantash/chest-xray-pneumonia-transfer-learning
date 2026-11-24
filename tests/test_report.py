@@ -12,6 +12,8 @@ from src.report import (
     markdown_tables,
     method_rows,
     model_rows,
+    patient_level,
+    patient_rows,
     read_predictions,
     run_method,
 )
@@ -90,6 +92,26 @@ def test_model_rows():
     assert by_name["best_gp_seed1"]["accuracy_ci_low"] == 1.0
 
 
+def test_patient_level_takes_the_maximum_per_patient():
+    pred = {
+        "path": ["IM-0001-0001.jpeg", "IM-0001-0002.jpeg", "person5_virus_9.jpeg"],
+        "label": np.array([0, 0, 1]),
+        "prob": np.array([0.2, 0.7, 0.9]),
+        "score": np.array([-1.4, 0.8, 2.2]),
+    }
+    p = patient_level(pred)
+    assert p["path"] == ["IM-0001", "person5"]
+    np.testing.assert_array_equal(p["label"], [0, 1])
+    np.testing.assert_allclose(p["prob"], [0.7, 0.9])
+    np.testing.assert_allclose(p["score"], [0.8, 2.2])
+    rows = patient_rows({"m": pred}, 0.5)
+    assert rows[0]["n_patients"] == 2 and (rows[0]["fp"], rows[0]["tp"]) == (1, 1)
+
+    pred["label"] = np.array([0, 1, 1])  # one patient with both classes
+    with pytest.raises(ValueError, match="both classes"):
+        patient_level(pred)
+
+
 def test_model_rows_refuses_different_images():
     preds = _preds()
     preds["best_gp_seed0"]["path"] = list(reversed(PATHS))
@@ -131,7 +153,8 @@ def test_final_eval_script_end_to_end(train_cfg, monkeypatch, tmp_path):
     argv = ["final_eval.py", "--final", "--output-dir", str(output_dir), "--out", str(out)]
     monkeypatch.setattr(sys, "argv", argv + ["--n-boot", "20", "--device", "cpu"])
     final_eval.main()
-    for name in ("model_metrics.csv", "method_summary.csv", "results.md", "roc_test.png"):
+    names = ("model_metrics.csv", "method_summary.csv", "patient_metrics.csv", "results.md")
+    for name in (*names, "roc_test.png"):
         assert (out / name).is_file(), name
     assert (output_dir / "best_gp_seed0" / "eval_test" / "test_predictions.csv").is_file()
     with open(out / "model_metrics.csv", newline="", encoding="utf-8") as f:

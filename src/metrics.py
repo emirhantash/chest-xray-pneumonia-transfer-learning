@@ -1,7 +1,7 @@
 """Binary classification metrics with PNEUMONIA (label 1) as the positive class."""
 
 import numpy as np
-from sklearn.metrics import roc_auc_score, roc_curve
+from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
 
 def _ratio(numerator: float, denominator: float) -> float:
@@ -26,8 +26,10 @@ def binary_metrics(y_true, y_prob, threshold: float, y_score=None) -> dict:
     A sample is predicted as pneumonia when ``y_prob >= threshold``. ``error`` is
     ``1 - accuracy`` (the HPO objective). The AUC is computed from ``y_score`` when it is
     given (the log-odds, which do not saturate like float probabilities near 1.0) and
-    from ``y_prob`` otherwise. AUC is NaN when only one class is present or when a score
-    is NaN (a diverged model); NaN probabilities count as NORMAL.
+    from ``y_prob`` otherwise, and so is ``pr_auc`` (average precision, PNEUMONIA
+    positive). ``brier`` is the mean squared error of ``y_prob``. These are NaN when only
+    one class is present or when a score is NaN (a diverged model); NaN probabilities count
+    as NORMAL.
     """
     y_true = np.asarray(y_true, dtype=int)
     y_prob = np.asarray(y_prob, dtype=float)
@@ -50,6 +52,10 @@ def binary_metrics(y_true, y_prob, threshold: float, y_score=None) -> dict:
         "f1": _ratio(2 * precision * recall, precision + recall),
         "balanced_accuracy": (recall + specificity) / 2,
         "auc": float(roc_auc_score(y_true, score)) if auc_defined else float("nan"),
+        "pr_auc": float(average_precision_score(y_true, score)) if auc_defined else float("nan"),
+        "brier": float(np.mean((y_prob - y_true) ** 2))
+        if np.all(np.isfinite(y_prob))
+        else float("nan"),
     }
 
 

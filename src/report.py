@@ -15,7 +15,18 @@ from src.stats import CI_METRICS, cluster_bootstrap, mcnemar_exact, percentile_c
 
 REFERENCE = "baseline"
 _BEST_RUN = re.compile(r"^best_(gp|random)_seed(\d+)$")
-SUMMARY_METRICS = ("accuracy", "recall", "specificity", "precision", "f1", "auc")
+SUMMARY_METRICS = (
+    "accuracy",
+    "recall",
+    "specificity",
+    "precision",
+    "f1",
+    "balanced_accuracy",
+    "auc",
+    "pr_auc",
+    "brier",
+)
+PATIENT_METRICS = ("accuracy", "recall", "specificity", "precision", "balanced_accuracy", "auc")
 
 
 def read_predictions(path) -> dict:
@@ -107,16 +118,50 @@ def method_rows(rows: list[dict]) -> list[dict]:
     return out
 
 
+def patient_level(pred: dict) -> dict:
+    """One prediction per patient: the highest P(pneumonia) and log-odds of the patient's
+    images (a patient counts as pneumonia if any image does). Same keys as
+    :func:`read_predictions`, with patient IDs as ``path``."""
+    ids = [patient_id(p) for p in pred["path"]]
+    score = pred.get("score", pred["prob"])
+    order = list(dict.fromkeys(ids))
+    out = {"path": order, "label": [], "prob": [], "score": []}
+    for pid in order:
+        idx = [i for i, other in enumerate(ids) if other == pid]
+        labels = {int(pred["label"][i]) for i in idx}
+        if len(labels) != 1:
+            raise ValueError(f"Patient {pid} has images of both classes.")
+        out["label"].append(labels.pop())
+        out["prob"].append(max(pred["prob"][i] for i in idx))
+        out["score"].append(max(score[i] for i in idx))
+    return {k: (v if k == "path" else np.asarray(v)) for k, v in out.items()}
+
+
+def patient_rows(preds: dict[str, dict], threshold: float) -> list[dict]:
+    """Point metrics per model at the patient level (see :func:`patient_level`)."""
+    rows = []
+    for name, pred in preds.items():
+        p = patient_level(pred)
+        metrics = binary_metrics(p["label"], p["prob"], threshold, p["score"])
+        row = {"model": name, "n_patients": len(p["path"])}
+        row.update({k: metrics[k] for k in ("tn", "fp", "fn", "tp", *PATIENT_METRICS)})
+        rows.append(row)
+    return rows
+
+
 def _pct(value) -> str:
     return "–" if value is None else f"{100 * value:.1f}"
 
 
-def markdown_tables(rows: list[dict], methods: list[dict]) -> str:
-    """Results as Markdown (per model, then per method), percentages with one decimal."""
+def markdown_tables(
+    rows: list[dict], methods: list[dict], patients: list[dict] | None = None
+) -> str:
+    """Results as Markdown (per model, per method, and optionally per model at the patient
+    level), percentages with one decimal."""
     lines = [
         "| Model | Val error (%) | Test accuracy (%) [95% CI] | Recall | Specificity "
-        "| Precision | F1 | AUC | McNemar p vs baseline |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Precision | F1 | Balanced acc. | AUC | PR-AUC | Brier | McNemar p vs baseline |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
         acc = f"{_pct(r['accuracy'])} [{_pct(r['accuracy_ci_low'])}, {_pct(r['accuracy_ci_high'])}]"
@@ -124,12 +169,14 @@ def markdown_tables(rows: list[dict], methods: list[dict]) -> str:
         lines.append(
             f"| {r['model']} | {_pct(r['val_error'])} | {acc} | {_pct(r['recall'])} "
             f"| {_pct(r['specificity'])} | {_pct(r['precision'])} | {_pct(r['f1'])} "
-            f"| {r['auc']:.4f} | {'–' if p_value is None else f'{p_value:.3g}'} |"
+            f"| {_pct(r['balanced_accuracy'])} | {r['auc']:.4f} | {r['pr_auc']:.4f} "
+            f"| {r['brier']:.3f} | {'–' if p_value is None else f'{p_value:.3g}'} |"
         )
     lines += [
         "",
-        "| Method | Models | Test accuracy (%) | Recall | Specificity | F1 | AUC |",
-        "|---|---|---|---|---|---|---|",
+        "| Method | Models | Test accuracy (%) | Recall | Specificity | Balanced acc. | F1 "
+        "| AUC | PR-AUC | Brier |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ]
     for m in methods:
 
@@ -140,8 +187,24 @@ def markdown_tables(rows: list[dict], methods: list[dict]) -> str:
 
         lines.append(
             f"| {m['method']} | {m['n_models']} | {cell('accuracy')} | {cell('recall')} "
-            f"| {cell('specificity')} | {cell('f1')} | {cell('auc', 1.0, 4)} |"
+            f"| {cell('specificity')} | {cell('balanced_accuracy')} | {cell('f1')} "
+            f"| {cell('auc', 1.0, 4)} | {cell('pr_auc', 1.0, 4)} | {cell('brier', 1.0, 3)} |"
         )
+    if patients:
+        lines += [
+            "",
+            "Patient level (a patient is pneumonia if any image is predicted so):",
+            "",
+            "| Model | Patients | Accuracy | Recall | Specificity | Precision | Balanced acc. "
+            "| AUC |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for r in patients:
+            lines.append(
+                f"| {r['model']} | {r['n_patients']} | {_pct(r['accuracy'])} "
+                f"| {_pct(r['recall'])} | {_pct(r['specificity'])} | {_pct(r['precision'])} "
+                f"| {_pct(r['balanced_accuracy'])} | {r['auc']:.4f} |"
+            )
     return "\n".join(lines) + "\n"
 
 
