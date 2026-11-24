@@ -1,6 +1,6 @@
 [project]
 name = "chest-xray-pneumonia-transfer-learning"
-version = "1.0.0"
+version = "1.1.0"
 description = "Pneumonia detection from pediatric chest X-rays with AlexNet transfer learning and hyperparameter optimization"
 readme = "README.md"
 requires-python = ">=3.11"

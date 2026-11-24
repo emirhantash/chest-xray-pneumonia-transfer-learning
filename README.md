@@ -15,6 +15,9 @@ error from 1.15 % to 0.67–0.77 %, but on the test set every model reaches 80�
 pneumonia recall is 100 %, while only about half of the normal images are classified
 correctly. Validation scores do not predict test performance on this dataset.
 
+**Report:** the full final report (method, Bayesian optimization background, all results and
+discussion) is in [`reports/final_report_en.pdf`](reports/final_report_en.pdf).
+
 ## Setup
 
 Requires Python ≥ 3.11 and scikit-learn ≥ 1.8. The train/val split is read from a file
@@ -249,25 +252,36 @@ every training and HPO decision was fixed. Raw outputs are under `outputs/` (not
 
 Brackets are 95 % patient-level bootstrap intervals (2,000 replicates); Δ is the paired
 accuracy difference to the baseline in percentage points. Recall is 100 % (390 / 390) for
-every model; all errors are false positives. Precision and F1 are in `model_metrics.csv`.
-AUC and ROC curves are computed from the log-odds of the model output, because confident
-probabilities saturate at 1.0 and would tie.
+every model; all errors are false positives. AUC, PR-AUC and ROC curves are computed from
+the log-odds of the model output, because confident probabilities saturate at 1.0 and would
+tie. All tables are also in [`results/final/`](results/final/).
 
-| Model | Val error (%) | Test accuracy (%) | Δ vs baseline (pp) | Specificity (%) | AUC | McNemar p |
-|---|---|---|---|---|---|---|
-| baseline | 1.15 | 80.4 [76.6, 83.9] | – | 47.9 | 0.959 [0.943, 0.972] | – |
-| GP, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.966 [0.951, 0.979] | 0.36 |
-| GP, seed 1 | 0.77 | 80.3 [76.4, 83.7] | −0.2 [−1.7, +1.4] | 47.4 | 0.958 [0.942, 0.973] | 1.00 |
-| GP, seed 2 | 0.77 | 82.4 [78.7, 85.6] | +1.9 [+0.2, +3.9] | 53.0 | 0.973 [0.962, 0.984] | 0.058 |
-| Random, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.966 [0.951, 0.979] | 0.36 |
-| Random, seed 1 | 0.77 | 80.1 [76.3, 83.6] | −0.3 [−1.8, +1.1] | 47.0 | 0.968 [0.955, 0.980] | 0.84 |
-| Random, seed 2 | 0.67 | 79.6 [75.8, 83.1] | −0.8 [−2.3, +0.6] | 45.7 | 0.963 [0.949, 0.976] | 0.38 |
+| Model | Val error (%) | Test accuracy (%) | Δ vs baseline (pp) | Specificity (%) | Precision (%) | Balanced acc. (%) | AUC | McNemar p |
+|---|---|---|---|---|---|---|---|---|
+| baseline | 1.15 | 80.4 [76.6, 83.9] | – | 47.9 | 76.2 | 73.9 | 0.959 [0.943, 0.972] | – |
+| GP, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 77.1 | 75.2 | 0.966 [0.951, 0.979] | 0.36 |
+| GP, seed 1 | 0.77 | 80.3 [76.4, 83.7] | −0.2 [−1.7, +1.4] | 47.4 | 76.0 | 73.7 | 0.958 [0.942, 0.973] | 1.00 |
+| GP, seed 2 | 0.77 | 82.4 [78.7, 85.6] | +1.9 [+0.2, +3.9] | 53.0 | 78.0 | 76.5 | 0.973 [0.962, 0.984] | 0.058 |
+| Random, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 77.1 | 75.2 | 0.966 [0.951, 0.979] | 0.36 |
+| Random, seed 1 | 0.77 | 80.1 [76.3, 83.6] | −0.3 [−1.8, +1.1] | 47.0 | 75.9 | 73.5 | 0.968 [0.955, 0.980] | 0.84 |
+| Random, seed 2 | 0.67 | 79.6 [75.8, 83.1] | −0.8 [−2.3, +0.6] | 45.7 | 75.4 | 72.9 | 0.963 [0.949, 0.976] | 0.38 |
 
-| Method | Models | Test accuracy (%) | Specificity (%) | F1 (%) | AUC |
-|---|---|---|---|---|---|
-| baseline | 1 | 80.4 | 47.9 | 86.5 | 0.959 |
-| Bayesian optimization (GP) | 3 | 81.4 ± 1.0 | 50.3 ± 2.8 | 87.0 ± 0.6 | 0.966 ± 0.008 |
-| Random Search | 3 | 80.4 ± 0.9 | 47.7 ± 2.4 | 86.4 ± 0.5 | 0.966 ± 0.003 |
+| Method | Models | Test accuracy (%) | Specificity (%) | Balanced acc. (%) | F1 (%) | AUC | PR-AUC | Brier |
+|---|---|---|---|---|---|---|---|---|
+| baseline | 1 | 80.4 | 47.9 | 73.9 | 86.5 | 0.959 | 0.972 | 0.179 |
+| Bayesian optimization (GP) | 3 | 81.4 ± 1.0 | 50.3 ± 2.8 | 75.1 ± 1.4 | 87.0 ± 0.6 | 0.966 ± 0.008 | 0.976 ± 0.007 | 0.169 ± 0.017 |
+| Random Search | 3 | 80.4 ± 0.9 | 47.7 ± 2.4 | 73.9 ± 1.2 | 86.4 ± 0.5 | 0.966 ± 0.003 | 0.976 ± 0.002 | 0.177 ± 0.016 |
+
+Balanced accuracy (72.9–76.5 %) is a fairer single summary than accuracy here, because the
+test set is 62.5 % pneumonia and every error is a false positive. The Brier score is the mean
+squared error of P(pneumonia); the class-weighted loss does not aim at calibrated
+probabilities, and no calibration was fitted.
+
+**Patient level.** The 624 test images belong to 427 parsed patient IDs. Taking a patient's
+prediction as the maximum over its images (pneumonia if any image is), recall stays at
+100 % and specificity at 45.8–53.3 % for every model; accuracy is 71.4–75.4 % and balanced
+accuracy 72.9–76.7 % (`results/final/patient_metrics.csv`). The image-level conclusions do
+not change.
 
 ![ROC curves of all models on the test set](docs/figures/roc_test.png)
 
@@ -303,8 +317,16 @@ In short, on this dataset the validation split of the train folder is saturated 
 predict test performance. The HPO objective (validation error at a fixed threshold) therefore
 optimized a quantity that is already near its ceiling. Possible next steps (not done here):
 - a threshold-free or probabilistic objective (AUC, log loss);
-- data augmentation ([D5](docs/deviations_from_interim_report.md#d5-data-augmentation-open), still open);
-- calibration or evaluation on data from other sources.
+- a validation or calibration set that represents the test distribution, ideally from another
+  source, to choose a decision threshold. Temperature scaling alone would not help: dividing
+  the logits by a constant keeps their sign, so the predictions at the 0.5 threshold and the
+  AUC stay the same;
+- data augmentation ([D5](docs/deviations_from_interim_report.md#d5-data-augmentation-open), still open)
+  and aspect-ratio-preserving resizing.
+
+**This is a research prototype, not a clinical tool.** It was trained and tested on one
+pediatric dataset from a single center, and at its fixed threshold it labels about half of
+the normal test images as pneumonia.
 
 ## Development
 
@@ -337,7 +359,8 @@ src/utils.py               # set_seed, seed_worker, load_config, get_device
 src/data.py                # file listing, patient IDs, split (+ split file), transforms,
                            #   image cache, loaders, class weights
 src/model.py               # build_alexnet
-src/metrics.py             # confusion matrix, accuracy, recall, specificity, F1, AUC, ROC
+src/metrics.py             # confusion matrix, accuracy, recall, specificity, F1, AUC,
+                           #   PR-AUC, Brier score, ROC
 src/engine.py              # optimizer, loss, train / evaluate loops, AMP
 src/checkpoint.py          # atomic checkpoints, RNG state capture/restore
 src/plots.py               # learning curves, confusion matrix, ROC figures
@@ -353,12 +376,16 @@ scripts/hpo.py             # runs or resumes one HPO study
 scripts/compare_hpo.py     # compares the studies (table and plots)
 scripts/final_eval.py      # final test evaluation of the baseline and the HPO models
 scripts/check_patient_overlap.py   # are shared train/test patient IDs the same patients?
+scripts/export_results.py  # copies the small result tables from outputs/ to results/
 notebooks/colab_kaggle_runner.ipynb   # runs the pipeline on Colab / Kaggle GPUs
 tests/                     # pytest suite on synthetic data (fixtures in conftest.py)
 docs/deviations_from_interim_report.md   # what changed since the interim report and why
 docs/figures/                            # figures used in this README (copied from outputs/)
+results/                   # final result tables: all HPO trials, test metrics (see its README)
+reports/final_report_en.pdf   # the final report (BİM 541, English)
 pyproject.toml             # project metadata, ruff and pytest settings
-requirements.txt           # runtime dependencies (install PyTorch first)
+requirements.txt           # runtime dependencies, minimum versions (install PyTorch first)
+requirements-lock.txt      # exact versions of the environment that produced the results
 requirements-dev.txt       # pytest, ruff
 .github/workflows/ci.yml   # CI: lint + tests on CPU
 ```
@@ -371,7 +398,10 @@ is re-seeded with `seed + epoch` at the start of every epoch, so a resumed run s
 same batches as an uninterrupted one. cuDNN is set to deterministic mode, but some CUDA
 kernels are not bit-exact between runs, and runs on Apple MPS may not be either. Library
 versions, the device, and the git commit of every run are saved in `run_info.json` (and
-with every HPO session).
+with every HPO session). `requirements-lock.txt` pins the exact package versions of the
+environment that produced the reported results; `requirements.txt` only sets minimum
+versions. The trial-level HPO results and the final tables are in [`results/`](results/)
+(`python scripts/export_results.py` refreshes them from `outputs/`).
 
 **Cross-platform check (Kaggle T4, torch 2.11).** The runner notebook was run end to end on
 Kaggle: `check_data.py` passed and recomputed the identical split, the baseline was

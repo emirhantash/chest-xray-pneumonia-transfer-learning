@@ -49,6 +49,10 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   - The patient ID is inferred from the file-name convention; it has not been confirmed
     against official metadata. `IM-xxxx` and `NORMAL2-IM-xxxx` are treated as different
     ID namespaces.
+  - **Strict parsing (v1.1, 2026-11-24):** a file name that matches none of these
+    conventions now raises an error instead of becoming its own patient, so a new naming
+    scheme cannot silently put images of one patient on both sides of the split. All 5,856
+    files of the dataset parse; the split is unchanged.
   - The split is no longer exactly 80/20 by image count and class ratios are only
     approximately preserved (see resulting numbers in D3).
 
@@ -350,6 +354,11 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
     comparisons is applied; the per-method summary is the main result.
   - The decision threshold stays at 0.5 (never tuned, D10).
   - The ROC plot also marks each model's operating point at that threshold.
+  - **Added in v1.1 (2026-11-24), descriptive only:** precision and balanced accuracy in
+    the summary tables, PR-AUC (average precision, from the log-odds) and the Brier score,
+    with bootstrap intervals, and patient-level metrics (one prediction per patient, the
+    maximum over its images). They were computed from the saved test predictions; no model
+    was evaluated again and no decision depends on them.
 - **Outcome (2026-11-24):**
   - Test accuracy is 79.6–82.4 % for all seven models, against 98.9–99.3 % on validation.
   - Recall is 100 % and specificity 46–53 %: every error is a normal image classified as
