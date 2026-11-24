@@ -53,13 +53,21 @@ def list_images(split_dir):
 
 
 def patient_id(path) -> str:
-    """Parse the patient ID from a file name; fall back to the file name itself."""
+    """Parse the patient ID from a file name.
+
+    Raises ``ValueError`` for a name that matches no known convention: silently treating
+    such a file as its own patient could put images of one patient on both sides of the
+    patient-level split.
+    """
     name = Path(path).name
     for pattern in _PATIENT_PATTERNS:
         match = pattern.match(name)
         if match:
             return match.group(1)
-    return name
+    raise ValueError(
+        f"No patient ID in file name {name!r}; expected person<ID>_..., IM-<ID>-... or "
+        "NORMAL2-IM-<ID>-..."
+    )
 
 
 def split_train_val(paths, labels, val_fraction, mode, seed):

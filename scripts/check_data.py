@@ -135,12 +135,12 @@ def main():
         print(f"  {cls:9s} {w:.4f}")
 
     # 4. Patient overlap diagnostics
+    # patient_id raises for an unparsable name, so every file has an ID at this point.
     ids = {name: {patient_id(p) for p in paths} for name, (paths, _) in splits.items()}
-    unparsed = sum(patient_id(p) == p.name for name in splits for p in splits[name][0])
     train_val = len(ids["train"] & ids["val"])
     trainval_test = len((ids["train"] | ids["val"]) & ids["test"])
     print("\n[4] Patient-ID overlap (IDs parsed from file names)")
-    print(f"  files without a parsable patient ID: {unparsed}")
+    print("  files without a parsable patient ID: 0 (parsing is strict)")
     print(f"  train & val shared patient IDs:      {train_val}")
     print(
         f"  train/val & test shared patient IDs: {trainval_test} "

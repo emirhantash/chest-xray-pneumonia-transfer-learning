@@ -39,11 +39,16 @@ N_TRAIN = len(TRAIN_NORMAL) + len(TRAIN_PNEUMONIA)
         ("person1_virus_6.jpeg", "person1"),
         ("IM-0115-0001.jpeg", "IM-0115"),
         ("NORMAL2-IM-0383-0001.jpeg", "NORMAL2-IM-0383"),
-        ("unknown_file.jpeg", "unknown_file.jpeg"),  # fallback: the file name itself
     ],
 )
 def test_patient_id(name, expected):
     assert patient_id(name) == expected
+
+
+@pytest.mark.parametrize("name", ["unknown_file.jpeg", "IM-0115.jpeg", "xperson1_virus_6.jpeg"])
+def test_patient_id_rejects_unknown_names(name):
+    with pytest.raises(ValueError, match="No patient ID"):
+        patient_id(name)
 
 
 def test_patient_id_accepts_paths(data_root):
