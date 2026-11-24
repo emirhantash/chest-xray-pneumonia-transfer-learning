@@ -314,6 +314,10 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   `scripts/train.py`, which produces the full outputs (checkpoint, curves, predictions)
   used in Phase 4. The retrained model's validation error can differ slightly from the
   trial's because GPU training is not bit-exact; both values are reported.
+- **Outcome (2026-11-24):** for all six studies the retrained model reached exactly the
+  trial's validation error and confusion matrix (5 × 0.0077, 1 × 0.0067). The seed-0 best
+  configurations of both methods are the same shared initial-design trial (D13), so
+  `best_gp_seed0` and `best_random_seed0` are the same model.
 
 ## D15. Final test evaluation (decided, Phase 4)
 
@@ -322,9 +326,9 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
 - **Now:**
   - The test set is used once, by `scripts/final_eval.py --final`, after all training
     and HPO decisions are fixed. It evaluates the baseline and the retrained best model
-    of **every** study (D14), not a single "winner": all studies reach the same best
-    validation error (D13), so picking one of them would be an arbitrary choice made on
-    a tie. Results are reported per model and as mean ± standard deviation over the
+    of **every** study (D14), not a single "winner": the best validation errors of the
+    studies differ by at most one image (0.0067–0.0077, D13), so picking one of them
+    would be an arbitrary choice made on a near-tie. Results are reported per model and as mean ± standard deviation over the
     three seeds of each method.
   - **95 % confidence intervals** come from a patient-level (cluster) bootstrap with
     2,000 replicates: whole patients are resampled because images of the same patient
@@ -336,3 +340,13 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
     the difference is the more conservative statement. No correction for multiple
     comparisons is applied; the per-method summary is the main result.
   - The decision threshold stays at 0.5 (never tuned, D10).
+  - The ROC plot also marks each model's operating point at that threshold.
+- **Outcome (2026-11-24, run once):**
+  - Test accuracy is 79.6–82.4 % for all seven models, against 98.9–99.3 % on validation.
+  - Recall is 100 % and specificity 46–53 %: every error is a normal image classified as
+    pneumonia. The AUC is 0.92–0.97.
+  - No HPO model differs clearly from the baseline in accuracy. The only paired interval
+    that excludes zero is GP seed 2 (+1.9 points [+0.2, +3.9]); its McNemar p is 0.058,
+    without multiplicity correction.
+  - GP 81.4 ± 1.0 % vs Random Search 80.4 ± 0.9 % over three seeds.
+  - Full tables and discussion are in the README's Results section.

@@ -8,9 +8,12 @@ BİM 541 course project (Erciyes University). Binary classification (Normal vs P
 the Kaggle "Chest X-Ray Images (Pneumonia)" dataset with an ImageNet-pretrained AlexNet
 (PyTorch), followed by hyperparameter optimization (Bayesian optimization vs. Random Search).
 
-**Status:** Data pipeline, training/evaluation pipeline (resumable, with a Colab/Kaggle
-runner notebook), hyperparameter-optimization pipeline, test suite, and CI are done. The HPO
-studies are running; results and the final test evaluation come next.
+**Status:** All experiments are done: baseline, six HPO studies (Bayesian optimization and
+Random Search, three seeds each), retraining of their best configurations, and a single final
+evaluation on the test set. See [Results](#results). In short, HPO lowered the validation
+error from 1.15 % to 0.67–0.77 %, but on the test set every model reaches 80–82 % accuracy:
+pneumonia recall is 100 %, while only about half of the normal images are classified
+correctly. Validation scores do not predict test performance on this dataset.
 
 ## Setup
 
@@ -205,6 +208,100 @@ McNemar test, and the mean ± standard deviation of each method over its three s
 (`model_metrics.csv`, `method_summary.csv`, `results.md`, `roc_test.png`). A model that
 already has test predictions is not evaluated again.
 
+## Results
+
+All numbers below were measured with the code in this repository on one RTX 3050 Ti Laptop
+GPU. Validation is the patient-level 20 % of the original train folder (1,044 images); test
+is the original test folder (624 images: 234 normal, 390 pneumonia), evaluated once after
+every training and HPO decision was fixed. Raw outputs are under `outputs/` (not committed).
+
+### Hyperparameter optimization (validation set)
+
+| Study | Best val error (%) | Mean of 5 best (%) | Median (%) | Trials better than baseline | Failed trials | Best configuration (lr, batch, epochs) | Hours |
+|---|---|---|---|---|---|---|---|
+| baseline | 1.15 | – | – | – | – | 1.0e-3, 16, 15 | 0.2 |
+| GP, seed 0 | 0.77 | 0.84 | 1.77 | 8 / 30 | 6 | 1.8e-4, 32, 23 | 1.4 |
+| GP, seed 1 | 0.77 | 0.88 | 1.44 | 7 / 30 | 4 | 1.1e-3, 16, 30 | 1.6 |
+| GP, seed 2 | 0.77 | 0.86 | 1.63 | 7 / 30 | 2 | 1.5e-4, 8, 27 | 1.9 |
+| Random, seed 0 | 0.77 | 0.92 | 1.25 | 9 / 30 | 5 | 1.8e-4, 32, 23 | 1.7 |
+| Random, seed 1 | 0.77 | 0.90 | 1.34 | 8 / 30 | 2 | 2.1e-4, 32, 25 | 1.5 |
+| Random, seed 2 | 0.67 | 0.79 | 1.34 | 10 / 30 | 6 | 1.1e-3, 32, 20 | 1.5 |
+
+![Best validation error so far per method](docs/figures/hpo_best_so_far.png)
+
+- Every study beats the baseline (12 errors): five reach 8 errors (0.77 %), Random Search
+  with seed 2 reaches 7 (0.67 %). The studies differ by at most one image out of 1,044, so the
+  validation set is close to its ceiling and cannot separate the two methods.
+- With seed 0, both methods found their best configuration in the shared random initial
+  design (the first five trials, identical for both methods,
+  [D13](docs/deviations_from_interim_report.md#d13-hpo-protocol-decided-phase-3)), so
+  `gp_seed0` and `random_seed0` are the same model.
+- Averaged over seeds, the GP best-so-far curve is not lower than Random Search's.
+- Retraining each best configuration reproduced the trial's validation error exactly
+  ([D14](docs/deviations_from_interim_report.md#d14-final-models-of-the-hpo-methods-decided-phase-3)).
+
+### Test set (final evaluation)
+
+Brackets are 95 % patient-level bootstrap intervals (2,000 replicates); Δ is the paired
+accuracy difference to the baseline in percentage points. Recall is 100 % (390 / 390) for
+every model; all errors are false positives. Precision and F1 are in `model_metrics.csv`.
+
+| Model | Val error (%) | Test accuracy (%) | Δ vs baseline (pp) | Specificity (%) | AUC | McNemar p |
+|---|---|---|---|---|---|---|
+| baseline | 1.15 | 80.4 [76.6, 83.9] | – | 47.9 | 0.920 [0.896, 0.943] | – |
+| GP, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.961 [0.943, 0.977] | 0.36 |
+| GP, seed 1 | 0.77 | 80.3 [76.4, 83.7] | −0.2 [−1.7, +1.4] | 47.4 | 0.925 [0.900, 0.947] | 1.00 |
+| GP, seed 2 | 0.77 | 82.4 [78.7, 85.6] | +1.9 [+0.2, +3.9] | 53.0 | 0.967 [0.952, 0.980] | 0.058 |
+| Random, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.961 [0.943, 0.977] | 0.36 |
+| Random, seed 1 | 0.77 | 80.1 [76.3, 83.6] | −0.3 [−1.8, +1.1] | 47.0 | 0.941 [0.919, 0.961] | 0.84 |
+| Random, seed 2 | 0.67 | 79.6 [75.8, 83.1] | −0.8 [−2.3, +0.6] | 45.7 | 0.925 [0.900, 0.948] | 0.38 |
+
+| Method | Models | Test accuracy (%) | Specificity (%) | F1 (%) | AUC |
+|---|---|---|---|---|---|
+| baseline | 1 | 80.4 | 47.9 | 86.5 | 0.920 |
+| Bayesian optimization (GP) | 3 | 81.4 ± 1.0 | 50.3 ± 2.8 | 87.0 ± 0.6 | 0.951 ± 0.023 |
+| Random Search | 3 | 80.4 ± 0.9 | 47.7 ± 2.4 | 86.4 ± 0.5 | 0.942 ± 0.018 |
+
+![ROC curves of all models on the test set](docs/figures/roc_test.png)
+
+**Findings**
+
+1. **Large validation–test gap.** About 99 % accuracy on validation drops to 80–82 % on test.
+   Every model detects all pneumonia images but labels about half of the normal test images
+   as pneumonia (specificity 46–53 %).
+2. **The ranking is good; the fixed threshold does not fit the test data.** AUC is 0.92–0.97,
+   but normal test images get much higher pneumonia probabilities than normal validation
+   images. For the baseline, the median P(pneumonia) of a normal test image is 0.65, and the
+   lowest score of any pneumonia test image is 0.97. At the fixed threshold of 0.5 every
+   model operates near a false positive rate of 0.5 (circles in the ROC plot), while the
+   curves reach about 95 % recall at a false positive rate of about 0.15. The validation set
+   comes from the same folder as the training data and shows no such shift, so a threshold
+   chosen on validation would not have helped. Choosing one on the test set would be test-set
+   tuning, which the protocol forbids
+   ([D10](docs/deviations_from_interim_report.md#d10-training-loop-and-model-selection-decided-phase-2)).
+   The cause of the shift (acquisition, labelling, or patient differences between the two
+   folders) is not established here.
+3. **Validation gains did not carry over to test accuracy.** Accuracy changes against the
+   baseline range from −0.8 to +1.9 points. Only GP seed 2 has an interval that excludes
+   zero (+1.9 [+0.2, +3.9]); its McNemar p is 0.058 and the six comparisons are not
+   corrected for multiplicity, so this is not taken as evidence of an improvement. The model
+   with the lowest validation error (Random, seed 2) has the lowest test accuracy. GP and
+   Random Search differ by one point on average (81.4 ± 1.0 vs 80.4 ± 0.9 %), within the
+   seed-to-seed spread, so no difference between the methods is claimed.
+4. **Low-learning-rate models rank better.** Three of the six best models used a learning
+   rate of about 1.5–1.8 × 10⁻⁴: GP seed 0, which is the same model as Random seed 0, and GP
+   seed 2. They reach AUC 0.961–0.967, with intervals at or above the upper end of the
+   baseline's. The three models trained with a learning rate of about 10⁻³ (the baseline,
+   GP seed 1, Random seed 2) stay at 0.920–0.925. Random seed 1 (2.1 × 10⁻⁴) lies in
+   between at 0.941. This is an observation on seven models, not a controlled experiment.
+
+In short, on this dataset the validation split of the train folder is saturated and does not
+predict test performance. The HPO objective (validation error at a fixed threshold) therefore
+optimized a quantity that is already near its ceiling. Possible next steps (not done here):
+- a threshold-free or probabilistic objective (AUC, log loss);
+- data augmentation ([D5](docs/deviations_from_interim_report.md#d5-data-augmentation-open), still open);
+- calibration or evaluation on data from other sources.
+
 ## Development
 
 Install the development tools on top of the setup above:
@@ -255,6 +352,7 @@ scripts/check_patient_overlap.py   # are shared train/test patient IDs the same 
 notebooks/colab_kaggle_runner.ipynb   # runs the pipeline on Colab / Kaggle GPUs
 tests/                     # pytest suite on synthetic data (fixtures in conftest.py)
 docs/deviations_from_interim_report.md   # what changed since the interim report and why
+docs/figures/                            # figures used in this README (copied from outputs/)
 pyproject.toml             # project metadata, ruff and pytest settings
 requirements.txt           # runtime dependencies (install PyTorch first)
 requirements-dev.txt       # pytest, ruff
@@ -295,6 +393,10 @@ with every HPO session).
   finds no duplicates and no sign that they are the same patients (the numbering appears to
   restart per folder), but cannot fully rule it out. The original test split is kept
   unchanged for comparability with published work.
+- **Validation does not reflect the test set.** The validation split comes from the
+  original train folder and is nearly saturated (0.67–1.15 % error), whereas the test folder
+  shows a strong shift towards false positives (see [Results](#results)). Model and
+  hyperparameter choices made on validation therefore say little about test performance.
 - **Single source, pediatric only.** All images come from one center (Guangzhou Women and
   Children's Medical Center) and from patients aged 1–5, which limits how well results
   generalize to adults or other devices and sites.
