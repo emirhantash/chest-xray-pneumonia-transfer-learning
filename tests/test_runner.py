@@ -2,6 +2,7 @@
 
 import csv
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -74,6 +75,10 @@ def test_val_predictions_match_metrics(completed_run):
     correct = sum(int(r["label"]) == int(r["pred"]) for r in rows)
     assert correct / len(rows) == pytest.approx(summary["val_metrics"]["accuracy"])
     assert all(r["path"].startswith("train/") for r in rows)  # val comes from train/
+    # The log-odds are the logit of the stored probability (rounded to 6 decimals).
+    for r in rows:
+        prob = 1 / (1 + math.exp(-float(r["logit_pneumonia"])))
+        assert prob == pytest.approx(float(r["prob_pneumonia"]), abs=1e-6)
 
 
 def test_existing_run_is_not_overwritten(completed_run):

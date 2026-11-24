@@ -80,17 +80,21 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, amp: bo
 
 @torch.inference_mode()
 def evaluate(model, loader, criterion, device, threshold: float):
-    """Evaluate in eval mode and float32; returns ``(metrics, y_true, y_prob)``.
+    """Evaluate in eval mode and float32; returns ``(metrics, y_true, y_prob, y_logit)``.
 
-    ``y_prob`` is the softmax probability of PNEUMONIA; ``metrics`` adds the epoch's
-    mean (weighted) loss to :func:`src.metrics.binary_metrics`. Evaluation never uses
-    mixed precision, even when training does: activations of a badly trained model can
-    exceed the float16 range (65,504) and turn every prediction into NaN (D11).
+    ``y_prob`` is the softmax probability of PNEUMONIA and ``y_logit`` its log-odds
+    (logit of PNEUMONIA minus logit of NORMAL). The AUC is computed from ``y_logit``:
+    confident predictions saturate to a probability of exactly 1.0 in float32, which
+    creates ties and lowers the AUC, while their log-odds stay distinct. ``metrics``
+    adds the epoch's mean (weighted) loss to :func:`src.metrics.binary_metrics`.
+    Evaluation never uses mixed precision, even when training does: activations of a
+    badly trained model can exceed the float16 range (65,504) and turn every prediction
+    into NaN (D11).
     """
     model.eval()
     loss_sum = torch.zeros((), device=device)
     weight_sum = torch.zeros((), device=device)
-    all_labels, all_probs = [], []
+    all_labels, all_probs, all_logits = [], [], []
     for images, labels in loader:
         images = images.to(device, non_blocking=True)
         labels = labels.to(device, non_blocking=True)
@@ -100,8 +104,10 @@ def evaluate(model, loader, criterion, device, threshold: float):
         weight_sum += batch_weight
         all_labels.append(labels.cpu())
         all_probs.append(torch.softmax(logits, dim=1)[:, 1].cpu())
+        all_logits.append((logits[:, 1] - logits[:, 0]).cpu())
     y_true = torch.cat(all_labels).numpy()
     y_prob = torch.cat(all_probs).numpy().astype(np.float64)
-    metrics = binary_metrics(y_true, y_prob, threshold)
+    y_logit = torch.cat(all_logits).numpy().astype(np.float64)
+    metrics = binary_metrics(y_true, y_prob, threshold, y_score=y_logit)
     metrics["loss"] = (loss_sum / weight_sum).item()
-    return metrics, y_true, y_prob
+    return metrics, y_true, y_prob, y_logit

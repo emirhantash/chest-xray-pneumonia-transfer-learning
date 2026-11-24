@@ -32,12 +32,14 @@ def cluster_bootstrap(
     n_boot: int = 2000,
     seed: int = 0,
     metrics=CI_METRICS,
+    y_scores: dict[str, np.ndarray] | None = None,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Bootstrap distributions of ``metrics`` for every model in ``y_probs``.
 
     Each replicate draws as many groups (patients) as there are, with replacement, and
     takes all images of the drawn groups. Returns ``{model: {metric: array(n_boot)}}``;
-    replicate ``i`` uses the same images for every model.
+    replicate ``i`` uses the same images for every model. ``y_scores`` (per model, e.g.
+    log-odds) are used for the AUC instead of the probabilities.
     """
     y_true = np.asarray(y_true, dtype=int)
     groups = np.asarray(groups)
@@ -49,7 +51,8 @@ def cluster_bootstrap(
         drawn = rng.integers(0, len(unique), size=len(unique))
         idx = np.concatenate([members[g] for g in drawn])
         for name, prob in y_probs.items():
-            values = binary_metrics(y_true[idx], np.asarray(prob)[idx], threshold)
+            score = None if y_scores is None else np.asarray(y_scores[name])[idx]
+            values = binary_metrics(y_true[idx], np.asarray(prob)[idx], threshold, score)
             for m in metrics:
                 out[name][m][i] = values[m]
     return out

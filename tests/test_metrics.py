@@ -13,6 +13,15 @@ Y_PROB = [0.9, 0.8, 0.7, 0.6, 0.4, 0.2, 0.7, 0.3, 0.2, 0.1]
 # At threshold 0.5: predictions 1 1 1 1 0 0 | 1 0 0 0 -> tp 4, fn 2, fp 1, tn 3.
 
 
+def test_auc_uses_the_scores_when_given():
+    # Confident predictions saturate to probability 1.0 and tie; their log-odds do not.
+    y_true, y_prob = [0, 1, 0, 1], [1.0, 1.0, 0.1, 0.2]
+    assert binary_metrics(y_true, y_prob, 0.5)["auc"] == pytest.approx(0.625)
+    m = binary_metrics(y_true, y_prob, 0.5, y_score=[20.0, 30.0, -2.2, -1.4])
+    assert m["auc"] == pytest.approx(0.75)  # the tie at 1.0 is resolved: 30 > 20
+    assert m["accuracy"] == binary_metrics(y_true, y_prob, 0.5)["accuracy"]  # threshold on prob
+
+
 def test_confusion_counts():
     y_pred = [1, 1, 1, 1, 0, 0, 1, 0, 0, 0]
     assert confusion_counts(Y_TRUE, y_pred) == {"tn": 3, "fp": 1, "fn": 2, "tp": 4}

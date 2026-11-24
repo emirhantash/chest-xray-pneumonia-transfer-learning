@@ -20,15 +20,18 @@ def confusion_counts(y_true, y_pred) -> dict:
     }
 
 
-def binary_metrics(y_true, y_prob, threshold: float) -> dict:
+def binary_metrics(y_true, y_prob, threshold: float, y_score=None) -> dict:
     """Confusion matrix and summary metrics from labels and predicted P(pneumonia).
 
     A sample is predicted as pneumonia when ``y_prob >= threshold``. ``error`` is
-    ``1 - accuracy`` (the HPO objective). AUC is NaN when only one class is present or
-    when a probability is NaN (a diverged model); NaN probabilities count as NORMAL.
+    ``1 - accuracy`` (the HPO objective). The AUC is computed from ``y_score`` when it is
+    given (the log-odds, which do not saturate like float probabilities near 1.0) and
+    from ``y_prob`` otherwise. AUC is NaN when only one class is present or when a score
+    is NaN (a diverged model); NaN probabilities count as NORMAL.
     """
     y_true = np.asarray(y_true, dtype=int)
     y_prob = np.asarray(y_prob, dtype=float)
+    score = y_prob if y_score is None else np.asarray(y_score, dtype=float)
     counts = confusion_counts(y_true, (y_prob >= threshold).astype(int))
     tn, fp, fn, tp = counts["tn"], counts["fp"], counts["fn"], counts["tp"]
 
@@ -36,7 +39,7 @@ def binary_metrics(y_true, y_prob, threshold: float) -> dict:
     recall = _ratio(tp, tp + fn)  # sensitivity
     specificity = _ratio(tn, tn + fp)
     precision = _ratio(tp, tp + fp)
-    auc_defined = len(np.unique(y_true)) == 2 and bool(np.all(np.isfinite(y_prob)))
+    auc_defined = len(np.unique(y_true)) == 2 and bool(np.all(np.isfinite(score)))
     return {
         **counts,
         "accuracy": accuracy,
@@ -46,11 +49,12 @@ def binary_metrics(y_true, y_prob, threshold: float) -> dict:
         "precision": precision,
         "f1": _ratio(2 * precision * recall, precision + recall),
         "balanced_accuracy": (recall + specificity) / 2,
-        "auc": float(roc_auc_score(y_true, y_prob)) if auc_defined else float("nan"),
+        "auc": float(roc_auc_score(y_true, score)) if auc_defined else float("nan"),
     }
 
 
-def roc_points(y_true, y_prob) -> tuple[np.ndarray, np.ndarray]:
-    """False-positive and true-positive rates of the ROC curve."""
-    fpr, tpr, _ = roc_curve(y_true, y_prob)
+def roc_points(y_true, y_score) -> tuple[np.ndarray, np.ndarray]:
+    """False-positive and true-positive rates of the ROC curve (scores: log-odds or
+    probabilities; any monotone score gives the same curve, up to ties)."""
+    fpr, tpr, _ = roc_curve(y_true, y_score)
     return fpr, tpr

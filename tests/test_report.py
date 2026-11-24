@@ -53,6 +53,25 @@ def test_read_predictions(tmp_path):
     assert pred["path"] == ["test/NORMAL/a.jpeg", "test/P/b.jpeg"]
     np.testing.assert_array_equal(pred["label"], [0, 1])
     np.testing.assert_allclose(pred["prob"], [0.25, 0.9])
+    np.testing.assert_allclose(pred["score"], pred["prob"])  # no log-odds column
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["path", "label", "prob_pneumonia", "logit_pneumonia", "pred"])
+        writer.writerows([["a", 0, "1.000000", "17.5", 1], ["b", 1, "1.000000", "21.25", 1]])
+    np.testing.assert_allclose(read_predictions(path)["score"], [17.5, 21.25])
+
+
+def test_model_rows_auc_from_log_odds():
+    preds = _preds()
+    for p in preds.values():  # saturated probabilities: every positive call ties at 1.0
+        p["score"] = np.log(p["prob"] / (1 - p["prob"]))
+        p["prob"] = np.where(p["prob"] >= 0.5, 1.0, 0.0)
+    rows = model_rows(preds, dict.fromkeys(preds, None), 0.5, n_boot=20)
+    # best_gp_seed0: one normal (log-odds of 0.8) outranks one pneumonia (0.6) -> 23/24;
+    # from the tied probabilities it would be 21/24.
+    assert rows[1]["auc"] == pytest.approx(23 / 24)
+    assert rows[1]["accuracy"] == pytest.approx(0.9)
 
 
 def test_model_rows():

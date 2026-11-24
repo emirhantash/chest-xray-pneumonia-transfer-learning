@@ -6,8 +6,9 @@ Usage (from the repo root):
 
 This is the only step that uses the original test set. Each run is evaluated once with
 ``evaluate_run(split="test", final=True)``; a run that already has
-<run>/eval_test/test_predictions.csv is not evaluated again. Default runs:
-outputs/baseline and every retrained outputs/best_<method>_seed<n>.
+<run>/eval_test/test_predictions.csv with log-odds is not evaluated again. Default runs:
+outputs/baseline and every retrained outputs/best_<method>_seed<n>. AUC and ROC curves
+use the log-odds, because confident probabilities saturate at 1.0 and tie.
 
 Writes to --out: model_metrics.csv (metrics, 95 % patient-level bootstrap intervals,
 McNemar test and accuracy difference vs the baseline), method_summary.csv (mean ± std
@@ -34,6 +35,13 @@ from src.report import (
 from src.runner import evaluate_run
 
 LINESTYLES = ["-", "--", ":", "-."]
+
+
+def _has_log_odds(pred_path: Path) -> bool:
+    """Older prediction files lack the log-odds column; their rounded probabilities tie
+    for confident predictions and give a wrong AUC, so such runs are evaluated again."""
+    with open(pred_path, encoding="utf-8") as f:
+        return "logit_pneumonia" in f.readline()
 
 
 def default_runs(output_dir: Path) -> list[Path]:
@@ -63,7 +71,7 @@ def main():
     preds, val_errors, thresholds = {}, {}, set()
     for run in runs:
         pred_path = run / "eval_test" / "test_predictions.csv"
-        if pred_path.is_file():
+        if pred_path.is_file() and _has_log_odds(pred_path):
             print(f"{run.name}: reusing {pred_path}")
         else:
             print(f"{run.name}: evaluating on the test set")
@@ -91,7 +99,7 @@ def main():
     curves = []
     for row in rows:
         p = preds[row["model"]]
-        fpr, tpr = roc_points(p["label"], p["prob"])
+        fpr, tpr = roc_points(p["label"], p["score"])
         method, seed = run_method(row["model"])
         curves.append(
             {

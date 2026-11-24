@@ -68,24 +68,26 @@ def _write_history(path, history: list[dict]) -> None:
         writer.writerows(history)
 
 
-def _write_predictions(path, paths, root, y_true, y_prob, threshold: float) -> None:
+def _write_predictions(path, paths, root, y_true, y_prob, y_logit, threshold: float) -> None:
+    """One row per image; ``logit_pneumonia`` (log-odds) keeps the ranking of confident
+    predictions whose probability rounds to 1.000000."""
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["path", "label", "prob_pneumonia", "pred"])
-        for p, y, prob in zip(paths, y_true, y_prob, strict=True):
+        writer.writerow(["path", "label", "prob_pneumonia", "logit_pneumonia", "pred"])
+        for p, y, prob, logit in zip(paths, y_true, y_prob, y_logit, strict=True):
             rel = Path(p).relative_to(root).as_posix()
-            writer.writerow([rel, int(y), f"{prob:.6f}", int(prob >= threshold)])
+            writer.writerow([rel, int(y), f"{prob:.6f}", f"{logit:.9g}", int(prob >= threshold)])
 
 
-def _save_eval_outputs(out_dir, prefix, metrics, paths, root, y_true, y_prob, threshold):
+def _save_eval_outputs(out_dir, prefix, metrics, paths, root, y_true, y_prob, y_logit, threshold):
     """Predictions CSV, confusion matrix, and ROC curve for one evaluated subset."""
     _write_predictions(
-        out_dir / f"{prefix}_predictions.csv", paths, root, y_true, y_prob, threshold
+        out_dir / f"{prefix}_predictions.csv", paths, root, y_true, y_prob, y_logit, threshold
     )
     plot_confusion_matrix(
         metrics, out_dir / f"confusion_{prefix}.png", f"Confusion matrix ({prefix})"
     )
-    fpr, tpr = roc_points(y_true, y_prob)
+    fpr, tpr = roc_points(y_true, y_logit)
     plot_roc(fpr, tpr, metrics["auc"], out_dir / f"roc_{prefix}.png", f"ROC ({prefix})")
 
 
@@ -293,7 +295,7 @@ def run_training(
 
     if latest is None:  # the run was already complete: recompute the final predictions
         latest = evaluate(model, loaders["val"], criterion, device, threshold)
-    val, y_true, y_prob = latest
+    val, y_true, y_prob, y_logit = latest
     best = min(history, key=lambda row: row["val_error"])
     _write_json(
         run_dir / "val_metrics.json",
@@ -307,7 +309,9 @@ def run_training(
             "lowest_val_error": best["val_error"],
         },
     )
-    _save_eval_outputs(run_dir, "val", val, splits["val"][0], root, y_true, y_prob, threshold)
+    _save_eval_outputs(
+        run_dir, "val", val, splits["val"][0], root, y_true, y_prob, y_logit, threshold
+    )
     plot_history(history, run_dir / "curves.png")
     return {"epoch": history[-1]["epoch"], "completed": True, "val_metrics": val}
 
@@ -353,7 +357,7 @@ def evaluate_run(
     model = build_alexnet(cfg["model"]["num_classes"], pretrained=False).to(device)
     model.load_state_dict(ckpt["model"])
     criterion = build_criterion(splits["train"][1], cfg, device)
-    metrics, y_true, y_prob = evaluate(model, loader, criterion, device, threshold)
+    metrics, y_true, y_prob, y_logit = evaluate(model, loader, criterion, device, threshold)
 
     out_dir = run_dir / f"eval_{split}"
     out_dir.mkdir(exist_ok=True)
@@ -361,5 +365,7 @@ def evaluate_run(
         out_dir / "metrics.json",
         {"split": split, "epoch": ckpt["epoch"], "threshold": threshold, "metrics": metrics},
     )
-    _save_eval_outputs(out_dir, split, metrics, splits[split][0], root, y_true, y_prob, threshold)
+    _save_eval_outputs(
+        out_dir, split, metrics, splits[split][0], root, y_true, y_prob, y_logit, threshold
+    )
     return metrics

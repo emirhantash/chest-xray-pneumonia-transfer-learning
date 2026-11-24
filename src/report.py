@@ -19,13 +19,18 @@ SUMMARY_METRICS = ("accuracy", "recall", "specificity", "precision", "f1", "auc"
 
 
 def read_predictions(path) -> dict:
-    """Predictions CSV of an evaluated subset (``path, label, prob_pneumonia, pred``)."""
+    """Predictions CSV of an evaluated subset (``path, label, prob_pneumonia,
+    logit_pneumonia, pred``). ``score`` is the log-odds, or the probability for files
+    written before the log-odds column existed."""
     with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
+    prob = np.array([float(r["prob_pneumonia"]) for r in rows])
+    has_logit = bool(rows) and "logit_pneumonia" in rows[0]
     return {
         "path": [r["path"] for r in rows],
         "label": np.array([int(r["label"]) for r in rows]),
-        "prob": np.array([float(r["prob_pneumonia"]) for r in rows]),
+        "prob": prob,
+        "score": np.array([float(r["logit_pneumonia"]) for r in rows]) if has_logit else prob,
         "pred": np.array([int(r["pred"]) for r in rows]),
     }
 
@@ -56,14 +61,14 @@ def model_rows(
             raise ValueError(f"{name} was evaluated on different images than {names[0]}.")
     y_true = first["label"]
     groups = [patient_id(p) for p in first["path"]]
-    boot = cluster_bootstrap(
-        y_true, {n: preds[n]["prob"] for n in names}, groups, threshold, n_boot, seed
-    )
+    probs = {n: preds[n]["prob"] for n in names}
+    scores = {n: preds[n].get("score", preds[n]["prob"]) for n in names}
+    boot = cluster_bootstrap(y_true, probs, groups, threshold, n_boot, seed, y_scores=scores)
 
     rows = []
     for name in names:
         method, run_seed = run_method(name)
-        metrics = binary_metrics(y_true, preds[name]["prob"], threshold)
+        metrics = binary_metrics(y_true, probs[name], threshold, scores[name])
         row = {"model": name, "method": method, "seed": run_seed, "val_error": val_errors[name]}
         row.update({k: metrics[k] for k in ("tn", "fp", "fn", "tp")})
         for m in CI_METRICS:
