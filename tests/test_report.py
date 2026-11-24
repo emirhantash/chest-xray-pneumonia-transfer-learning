@@ -94,6 +94,7 @@ def test_method_rows_and_markdown():
 def test_plot_roc_overlay(tmp_path):
     curves = [{"label": "a", "fpr": [0, 0.1, 1], "tpr": [0, 0.9, 1]}]
     curves.append({"label": "b", "fpr": [0, 1], "tpr": [0, 1], "color": "C1", "linestyle": "--"})
+    curves[0].update(point=(0.1, 0.9), point_label="operating point (threshold 0.5)")
     plot_roc_overlay(curves, tmp_path / "roc.png", "ROC")
     assert (tmp_path / "roc.png").stat().st_size > 0
 

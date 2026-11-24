@@ -78,7 +78,8 @@ def main():
     if len(thresholds) != 1:
         sys.exit(f"The runs use different thresholds: {sorted(thresholds)}")
 
-    rows = model_rows(preds, val_errors, thresholds.pop(), args.n_boot, args.seed)
+    threshold = thresholds.pop()
+    rows = model_rows(preds, val_errors, threshold, args.n_boot, args.seed)
     methods = method_rows(rows)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -99,6 +100,8 @@ def main():
                 "tpr": tpr,
                 "color": METHOD_COLORS.get(method, "black"),
                 "linestyle": LINESTYLES[(seed or 0) % len(LINESTYLES)],
+                "point": (1 - row["specificity"], row["recall"]),
+                "point_label": f"operating point (threshold {threshold})",
             }
         )
     plot_roc_overlay(curves, out / "roc_test.png", "ROC on the test set")

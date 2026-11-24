@@ -79,15 +79,22 @@ def plot_roc(fpr, tpr, auc: float, path, title: str) -> None:
 def plot_roc_overlay(curves: list[dict], path, title: str) -> None:
     """Several ROC curves in one plot, with a zoomed inset of the top-left corner.
 
-    Each curve is a dict with ``label, fpr, tpr`` and optional ``color, linestyle``.
+    Each curve is a dict with ``label, fpr, tpr`` and optional ``color, linestyle`` and
+    ``point`` (the ``(fpr, tpr)`` operating point at the decision threshold, drawn as a
+    marker; ``point_label`` names it once in the legend).
     """
     fig = Figure(figsize=(6, 5.5), layout="constrained")
     ax = fig.subplots()
     inset = ax.inset_axes([0.42, 0.12, 0.55, 0.5])
+    point_label = next((c["point_label"] for c in curves if "point_label" in c), None)
     for c in curves:
         style = {"color": c.get("color"), "linestyle": c.get("linestyle", "-"), "lw": 1.5}
-        ax.plot(c["fpr"], c["tpr"], label=c["label"], **style)
+        lines = ax.plot(c["fpr"], c["tpr"], label=c["label"], **style)
         inset.plot(c["fpr"], c["tpr"], **style)
+        if "point" in c:
+            ax.plot(*c["point"], "o", ms=6, mfc="none", color=lines[0].get_color(), clip_on=False)
+    if point_label and any("point" in c for c in curves):
+        ax.plot([], [], "o", ms=6, mfc="none", color="gray", label=point_label)
     ax.plot([0, 1], [0, 1], "--", color="gray", lw=1, label="chance")
     ax.set(
         xlabel="false positive rate (1 - specificity)",
@@ -100,7 +107,7 @@ def plot_roc_overlay(curves: list[dict], path, title: str) -> None:
     inset.tick_params(labelsize=7)
     inset.grid(alpha=0.3)
     ax.grid(alpha=0.3)
-    ax.legend(loc="upper left", fontsize=7)
+    ax.legend(loc="upper right", bbox_to_anchor=(0.98, 0.97), fontsize=7)
     fig.savefig(path, dpi=120)
 
 
