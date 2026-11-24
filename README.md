@@ -245,22 +245,24 @@ every training and HPO decision was fixed. Raw outputs are under `outputs/` (not
 Brackets are 95 % patient-level bootstrap intervals (2,000 replicates); Δ is the paired
 accuracy difference to the baseline in percentage points. Recall is 100 % (390 / 390) for
 every model; all errors are false positives. Precision and F1 are in `model_metrics.csv`.
+AUC and ROC curves are computed from the log-odds of the model output, because confident
+probabilities saturate at 1.0 and would tie.
 
 | Model | Val error (%) | Test accuracy (%) | Δ vs baseline (pp) | Specificity (%) | AUC | McNemar p |
 |---|---|---|---|---|---|---|
-| baseline | 1.15 | 80.4 [76.6, 83.9] | – | 47.9 | 0.920 [0.896, 0.943] | – |
-| GP, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.961 [0.943, 0.977] | 0.36 |
-| GP, seed 1 | 0.77 | 80.3 [76.4, 83.7] | −0.2 [−1.7, +1.4] | 47.4 | 0.925 [0.900, 0.947] | 1.00 |
-| GP, seed 2 | 0.77 | 82.4 [78.7, 85.6] | +1.9 [+0.2, +3.9] | 53.0 | 0.967 [0.952, 0.980] | 0.058 |
-| Random, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.961 [0.943, 0.977] | 0.36 |
-| Random, seed 1 | 0.77 | 80.1 [76.3, 83.6] | −0.3 [−1.8, +1.1] | 47.0 | 0.941 [0.919, 0.961] | 0.84 |
-| Random, seed 2 | 0.67 | 79.6 [75.8, 83.1] | −0.8 [−2.3, +0.6] | 45.7 | 0.925 [0.900, 0.948] | 0.38 |
+| baseline | 1.15 | 80.4 [76.6, 83.9] | – | 47.9 | 0.959 [0.943, 0.972] | – |
+| GP, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.966 [0.951, 0.979] | 0.36 |
+| GP, seed 1 | 0.77 | 80.3 [76.4, 83.7] | −0.2 [−1.7, +1.4] | 47.4 | 0.958 [0.942, 0.973] | 1.00 |
+| GP, seed 2 | 0.77 | 82.4 [78.7, 85.6] | +1.9 [+0.2, +3.9] | 53.0 | 0.973 [0.962, 0.984] | 0.058 |
+| Random, seed 0 | 0.77 | 81.4 [77.8, 84.6] | +1.0 [−0.7, +2.7] | 50.4 | 0.966 [0.951, 0.979] | 0.36 |
+| Random, seed 1 | 0.77 | 80.1 [76.3, 83.6] | −0.3 [−1.8, +1.1] | 47.0 | 0.968 [0.955, 0.980] | 0.84 |
+| Random, seed 2 | 0.67 | 79.6 [75.8, 83.1] | −0.8 [−2.3, +0.6] | 45.7 | 0.963 [0.949, 0.976] | 0.38 |
 
 | Method | Models | Test accuracy (%) | Specificity (%) | F1 (%) | AUC |
 |---|---|---|---|---|---|
-| baseline | 1 | 80.4 | 47.9 | 86.5 | 0.920 |
-| Bayesian optimization (GP) | 3 | 81.4 ± 1.0 | 50.3 ± 2.8 | 87.0 ± 0.6 | 0.951 ± 0.023 |
-| Random Search | 3 | 80.4 ± 0.9 | 47.7 ± 2.4 | 86.4 ± 0.5 | 0.942 ± 0.018 |
+| baseline | 1 | 80.4 | 47.9 | 86.5 | 0.959 |
+| Bayesian optimization (GP) | 3 | 81.4 ± 1.0 | 50.3 ± 2.8 | 87.0 ± 0.6 | 0.966 ± 0.008 |
+| Random Search | 3 | 80.4 ± 0.9 | 47.7 ± 2.4 | 86.4 ± 0.5 | 0.966 ± 0.003 |
 
 ![ROC curves of all models on the test set](docs/figures/roc_test.png)
 
@@ -269,12 +271,12 @@ every model; all errors are false positives. Precision and F1 are in `model_metr
 1. **Large validation–test gap.** About 99 % accuracy on validation drops to 80–82 % on test.
    Every model detects all pneumonia images but labels about half of the normal test images
    as pneumonia (specificity 46–53 %).
-2. **The ranking is good; the fixed threshold does not fit the test data.** AUC is 0.92–0.97,
-   but normal test images get much higher pneumonia probabilities than normal validation
+2. **The ranking is good; the fixed threshold does not fit the test data.** AUC is 0.96–0.97
+   for every model, but normal test images get much higher pneumonia probabilities than normal validation
    images. For the baseline, the median P(pneumonia) of a normal test image is 0.65, and the
    lowest score of any pneumonia test image is 0.97. At the fixed threshold of 0.5 every
    model operates near a false positive rate of 0.5 (circles in the ROC plot), while the
-   curves reach about 95 % recall at a false positive rate of about 0.15. The validation set
+   curves reach 92–96 % recall at a false positive rate of 0.15. The validation set
    comes from the same folder as the training data and shows no such shift, so a threshold
    chosen on validation would not have helped. Choosing one on the test set would be test-set
    tuning, which the protocol forbids
@@ -288,12 +290,9 @@ every model; all errors are false positives. Precision and F1 are in `model_metr
    with the lowest validation error (Random, seed 2) has the lowest test accuracy. GP and
    Random Search differ by one point on average (81.4 ± 1.0 vs 80.4 ± 0.9 %), within the
    seed-to-seed spread, so no difference between the methods is claimed.
-4. **Low-learning-rate models rank better.** Three of the six best models used a learning
-   rate of about 1.5–1.8 × 10⁻⁴: GP seed 0, which is the same model as Random seed 0, and GP
-   seed 2. They reach AUC 0.961–0.967, with intervals at or above the upper end of the
-   baseline's. The three models trained with a learning rate of about 10⁻³ (the baseline,
-   GP seed 1, Random seed 2) stay at 0.920–0.925. Random seed 1 (2.1 × 10⁻⁴) lies in
-   between at 0.941. This is an observation on seven models, not a controlled experiment.
+4. **HPO did not improve the ranking either.** The AUC of all seven models lies between
+   0.958 and 0.973 with overlapping intervals (baseline 0.959 [0.943, 0.972]); the mean AUC
+   of both methods is 0.966.
 
 In short, on this dataset the validation split of the train folder is saturated and does not
 predict test performance. The HPO objective (validation error at a fixed threshold) therefore

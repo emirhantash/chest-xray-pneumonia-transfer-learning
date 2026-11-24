@@ -341,12 +341,25 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
     comparisons is applied; the per-method summary is the main result.
   - The decision threshold stays at 0.5 (never tuned, D10).
   - The ROC plot also marks each model's operating point at that threshold.
-- **Outcome (2026-11-24, run once):**
+- **Outcome (2026-11-24):**
   - Test accuracy is 79.6–82.4 % for all seven models, against 98.9–99.3 % on validation.
   - Recall is 100 % and specificity 46–53 %: every error is a normal image classified as
-    pneumonia. The AUC is 0.92–0.97.
+    pneumonia. The AUC is 0.958–0.973 for every model, so HPO did not improve the
+    ranking either.
   - No HPO model differs clearly from the baseline in accuracy. The only paired interval
     that excludes zero is GP seed 2 (+1.9 points [+0.2, +3.9]); its McNemar p is 0.058,
     without multiplicity correction.
   - GP 81.4 ± 1.0 % vs Random Search 80.4 ± 0.9 % over three seeds.
   - Full tables and discussion are in the README's Results section.
+- **AUC correction (2026-11-24, same day):** the first report computed AUC and ROC curves
+  from probabilities saved with six decimals. Confident outputs are exactly 1.0 in float32
+  or round to 1.000000 (253–400 of the 624 test images), and these ties lowered the AUC to
+  0.920–0.967 and created a spurious pattern in which low-learning-rate models seemed to rank
+  better. Evaluation now also returns the log-odds (logit of PNEUMONIA minus logit of
+  NORMAL), which do not saturate; AUC, its bootstrap intervals and the ROC curves use them,
+  and the prediction files store them (`logit_pneumonia`). The seven frozen models were
+  evaluated on the test set again to obtain the log-odds; nothing was trained, selected or
+  tuned, and every threshold-based number (accuracy, recall, specificity, McNemar) is
+  unchanged. The first outputs are kept in `outputs/archive/eval_test_rounded_probs/`.
+  Validation AUCs logged during training (history, `val_metrics.json`) were computed from
+  float32 probabilities with the same kind of ties; they were never used for a decision.
