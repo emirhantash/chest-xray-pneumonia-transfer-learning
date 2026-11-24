@@ -72,7 +72,8 @@ elsewhere, edit `configs/baseline.yaml` or pass `--data-root`:
 python scripts/check_data.py --config configs/baseline.yaml --data-root "C:/Users/<you>/Documents/chest_xray"
 ```
 
-On Kaggle notebooks the path is `/kaggle/input/chest-xray-pneumonia/chest_xray`.
+On Kaggle the dataset added as an input is mounted under `/kaggle/input/` (the exact
+folder depends on how it was added); the runner notebook finds it automatically.
 
 ## Data protocol
 
@@ -144,7 +145,8 @@ workers on Windows. Training needs under 1 GB of GPU memory at batch size 8–64
 **Colab / Kaggle.** [`notebooks/colab_kaggle_runner.ipynb`](notebooks/colab_kaggle_runner.ipynb)
 clones the repository, installs the dependencies, locates the dataset, writes outputs to
 Google Drive (Colab) or `/kaggle/working` (Kaggle), and resumes automatically when a
-checkpoint exists.
+checkpoint exists. It was tested end to end on a Kaggle T4 GPU (data check, baseline, a full
+HPO study, retraining); the Colab path has not been run.
 
 ## Evaluation
 
@@ -239,6 +241,9 @@ every training and HPO decision was fixed. Raw outputs are under `outputs/` (not
 - Averaged over seeds, the GP best-so-far curve is not lower than Random Search's.
 - Retraining each best configuration reproduced the trial's validation error exactly
   ([D14](docs/deviations_from_interim_report.md#d14-final-models-of-the-hpo-methods-decided-phase-3)).
+- On another platform the same configuration lands several images away (see
+  [Reproducibility](#reproducibility)): the noise of the objective across platforms is
+  larger than the difference between the methods.
 
 ### Test set (final evaluation)
 
@@ -367,6 +372,25 @@ same batches as an uninterrupted one. cuDNN is set to deterministic mode, but so
 kernels are not bit-exact between runs, and runs on Apple MPS may not be either. Library
 versions, the device, and the git commit of every run are saved in `run_info.json` (and
 with every HPO session).
+
+**Cross-platform check (Kaggle T4, torch 2.11).** The runner notebook was run end to end on
+Kaggle: `check_data.py` passed and recomputed the identical split, the baseline was
+trained, a full GP seed-0 study (30 trials, 1.5 h) was run, and its best configuration was
+retrained. Rerunning on the same machine is exact (the retrained model matched its trial),
+but across machines and library versions the results differ:
+
+| | Local (RTX 3050 Ti, torch 2.15) | Kaggle (T4, torch 2.11) |
+|---|---|---|
+| Baseline, validation errors (of 1,044) | 12 | 19 |
+| GP seed 0, trials 0 / 3 / 4 (same parameters) | 12 / 13 / 8 | 10 / 11 / 11 |
+| GP seed 0, best | 8 (lr 1.8e-4, batch 32, 23 epochs) | 8 (lr 2.0e-3, batch 64, 30 epochs) |
+| GP seed 0, mean of 5 best / median (%) | 0.84 / 1.77 | 0.88 / 1.39 |
+
+The first five trials have identical parameters on both platforms (seeded sampler); from
+trial 5 on, the GP sees different values and proposes different points, yet ends at the
+same best error. The same configuration and seed therefore vary by up to seven validation
+images between platforms, which is far more than the one-image difference between the
+methods.
 
 ## Limitations
 

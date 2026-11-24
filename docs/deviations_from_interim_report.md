@@ -305,6 +305,15 @@ Status legend: **decided**, i.e. implemented; **open**, i.e. to be decided in a 
   Differences between methods may be within noise; results are reported over seeds as
   best-so-far curves, the number of trials needed to beat the baseline, and the final test
   results of the selected models (Phase 4).
+- **Measured noise across platforms (2026-11-24):** the runner notebook was run on a
+  Kaggle T4 GPU (torch 2.11; locally RTX 3050 Ti, torch 2.15). The split was identical.
+  With the same configuration and seed, the baseline made 19 validation errors on Kaggle
+  against 12 locally. GP seed 0 trials 0, 3 and 4 (identical parameters on both platforms)
+  made 10 / 11 / 11 errors against 12 / 13 / 8. From trial 5 on, the GP proposed different
+  points, and its best error was again 8 images (lr 2.0e-3, batch 64, 30 epochs instead of
+  lr 1.8e-4, batch 32, 23 epochs). The objective therefore varies by several images between
+  platforms, more than the difference between the methods; the reported studies all ran on
+  the local GPU. The Kaggle study is not part of the comparison.
 
 ## D14. Final models of the HPO methods (decided, Phase 3)
 
